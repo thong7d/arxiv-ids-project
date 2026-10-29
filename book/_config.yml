@@ -1,0 +1,17 @@
+# Book configuration
+title: "Báo cáo Đồ án Nhập môn Khoa học Dữ liệu – Nhóm 13"
+author: "Phạm Minh Thông, Nguyễn Tiến Thành, Nguyễn Trịnh Quang"
+logo: ""
+
+execute:
+  execute_notebooks: "off"
+
+html:
+  use_issues_button: true
+  use_repository_button: true
+  home_page_in_navbar: true
+
+repository:
+  url: "https://github.com/thong7d/arxiv-ids-project"
+  path_to_book: "book"
+  branch: "main"

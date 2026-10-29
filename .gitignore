@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# C environments & Virtual environments
+# Virtual environments
 .venv/
 venv/
 env/
@@ -11,8 +11,10 @@ ENV/
 env.bak/
 venv.bak/
 
-# Data directories (CRITICAL: Course forbids committing data files)
+# Data & pipeline storage (CRITICAL: Never commit raw/processed data or archives)
 data/
+artifacts/
+exports/
 sources/
 bulk/
 downloads/
@@ -21,17 +23,26 @@ downloads/
 *.zip
 *.parquet
 *.bbl
+*.part
 
-# Jupyter Notebook checkpoints
+# Jupyter Notebook & Jupyter Book build
 .ipynb_checkpoints/
+book/_build/
+_build/
+
+# Testing & Linting cache
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
 
 # Environment variables & secrets
 .env
 .env.*
-*.secret
+!*.example
 credentials.json
 
-# IDE settings
+# IDE & Editor settings
 .vscode/
 .idea/
 *.sublime-workspace
@@ -42,7 +53,7 @@ credentials.json
 Thumbs.db
 Desktop.ini
 
-# Build / Output
+# Packaging & Build
 dist/
 build/
 *.egg-info/

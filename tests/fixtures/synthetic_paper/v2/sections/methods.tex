@@ -1,0 +1,22 @@
+\section{Methodology}
+Our pipeline extracts structured features from citation keys and candidate metadata.
+Consider the following loss function formulation:
+\begin{equation}
+L(\theta) = \sum_{i=1}^N (y_i - \hat{y}_i)^2
+\label{eq:loss}
+\end{equation}
+
+Table 1 summarizes the experimental partitions used in this study.
+\begin{table}[htpb]
+\centering
+\begin{tabular}{|c|c|}
+\hline
+Partition & Count \\
+\hline
+Train & 80 \\
+Validation & 10 \\
+Test & 10 \\
+\hline
+\end{tabular}
+\caption{Dataset partition breakdown}
+\end{table}
