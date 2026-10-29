@@ -98,7 +98,11 @@ def validate(
     console.print(f"[bold cyan]Running validation for stage: '{stage}' on {path}...[/bold cyan]")
 
     if stage == "raw":
-        paper_dirs = [d for d in path.iterdir() if d.is_dir()] if path.exists() else []
+        import re
+        paper_dirs = [
+            d for d in path.iterdir()
+            if d.is_dir() and re.match(r"^\d{4}[-_]\d+", d.name)
+        ] if path.exists() else []
         if not paper_dirs:
             console.print("[yellow]No paper directories found in path.[/yellow]")
             return
@@ -149,6 +153,7 @@ def crawl(
     manifest: Path = typer.Option(
         Path("data/manifests/papers.parquet"),
         "--manifest",
+        "-m",
         help="Path to papers manifest.",
     ),
     output: Path = typer.Option(
@@ -157,14 +162,45 @@ def crawl(
         "-o",
         help="Output directory for raw corpus.",
     ),
+    limit: Optional[int] = typer.Option(
+        None,
+        "--limit",
+        "-l",
+        help="Limit number of papers to crawl.",
+    ),
+    pilot: bool = typer.Option(
+        False,
+        "--pilot",
+        help="Run pilot crawl (10 papers per member = 30 total).",
+    ),
+    config: Path = typer.Option(
+        Path("configs/members.csv"),
+        "--config",
+        help="Path to members.csv config.",
+    ),
     resume: bool = typer.Option(
         True,
         "--resume/--no-resume",
         help="Resume from previous checkpoint.",
     ),
+    student_id: Optional[str] = typer.Option(
+        None,
+        "--student-id",
+        help="Filter crawl to papers owned by a specific student ID.",
+    ),
 ):
     """Crawl full-text LaTeX sources and reference metadata (Milestone 1)."""
-    console.print("[bold cyan]Crawl command placeholder (Phase 2 implementation)[/bold cyan]")
+    from .crawler import run_crawling_pipeline
+
+    run_crawling_pipeline(
+        manifest_path=manifest,
+        output_dir=output,
+        limit=limit,
+        pilot_mode=pilot,
+        members_config=config,
+        resume=resume,
+        student_id=student_id,
+    )
 
 
 @app.command()

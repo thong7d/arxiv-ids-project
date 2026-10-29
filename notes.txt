@@ -1,3 +1,4 @@
 - 3 milestone trong cùng 1 repo vì các milestone đều là các step của 1 pipeline
 - milestone 1: các phần quan trọng khi cào dữ liệu: file .tex, references (bibtex), metadata 
 - đầy đủ citations
+- đường link pages: https://thong7d.github.io/arxiv-ids-project/
