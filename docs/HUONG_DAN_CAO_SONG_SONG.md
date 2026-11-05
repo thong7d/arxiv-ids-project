@@ -41,10 +41,10 @@ Nếu chưa có key riêng, làm ngay để tránh bị giới hạn 100 req/5 p
 ### 0.3. Nhận file bundle từ Thông
 
 Thông sẽ gửi cho bạn 2 file (đã có sẵn trong thư mục Drive chung):
-- `ids13-code-692deb8d6f67.zip` — Source code bundle đã đóng gói
-- `ids13-code-692deb8d6f67.sha256` — File checksum để xác minh tính toàn vẹn
+- `ids13-code-28c10a118fd9.zip` — Source code bundle đã đóng gói
+- `ids13-code-28c10a118fd9.sha256` — File checksum để xác minh tính toàn vẹn
 
-**SHA-256 chuẩn:** `692deb8d6f67971277ee1caaf2afb5413dfc5a8108a3134954a0a601f7a99662`
+**SHA-256 chuẩn:** `28c10a118fd96e0b63f39ed11d528274928ac6c188b818dae07263e60d5a2983`
 
 ---
 
@@ -121,7 +121,7 @@ import hashlib, zipfile
 
 # ===========================================================
 # SHA-256 CHUẨN CỦA BUNDLE — KHÔNG ĐƯỢC THAY ĐỔI GIÁ TRỊ NÀY
-SOURCE_SHA256 = '692deb8d6f67971277ee1caaf2afb5413dfc5a8108a3134954a0a601f7a99662'
+SOURCE_SHA256 = '28c10a118fd96e0b63f39ed11d528274928ac6c188b818dae07263e60d5a2983'
 # ===========================================================
 
 CODE_ROOT = None
@@ -153,8 +153,8 @@ print(f'   Code root: {CODE_ROOT}')
 
 **Kết quả mong đợi:**
 ```
-✅ Source verified: 692deb8d6f67
-   Code root: /content/ids13-code-692deb8d6f67
+✅ Source verified: 28c10a118fd9
+   Code root: /content/ids13-code-28c10a118fd9
 ```
 
 ---
