@@ -70,7 +70,7 @@ def test_safe_extract_tar(tmp_path):
     assert (dest_dir / "main.tex").read_bytes().startswith(b"\\documentclass")
 
 
-def test_crawl_paper_checkpoint(tmp_path):
+def test_legacy_checkpoint_is_not_trusted(tmp_path):
     output_dir = tmp_path / "raw"
     paper_dir = output_dir / "2509-01047"
     paper_dir.mkdir(parents=True)
@@ -85,13 +85,18 @@ def test_crawl_paper_checkpoint(tmp_path):
     with open(paper_dir / "crawl_status.json", "w", encoding="utf-8") as f:
         json.dump(cached_status, f)
 
-    crawler = ArxivCrawler()
-    s2 = SemanticScholarClient()
+    from unittest.mock import Mock
 
-    # Should resume and return cached without making network calls
+    crawler = Mock()
+    crawler.fetch_metadata.return_value = None
+    crawler.last_error = "offline test"
+    s2 = Mock()
+
+    # Old success flags with missing files must never skip verification.
     res = crawl_paper("2509.01047", output_dir, crawler, s2, resume=True)
-    assert res["success"] is True
+    assert res["success"] is False
     assert res["arxiv_id"] == "2509.01047"
+    crawler.fetch_metadata.assert_called_once()
 
 
 def test_run_crawling_pipeline_student_filter(tmp_path):
@@ -100,10 +105,22 @@ def test_run_crawling_pipeline_student_filter(tmp_path):
     from ids_arxiv.crawler.runner import run_crawling_pipeline
 
     manifest_path = tmp_path / "papers.parquet"
-    mock_df = pd.DataFrame([
-        {"arxiv_id": "2508.17872", "owner_student_id": "23120364", "owner_name": "Pham Minh Thong", "order_in_range": 1},
-        {"arxiv_id": "2509.01047", "owner_student_id": "23120358", "owner_name": "Nguyen Tien Thanh", "order_in_range": 1},
-    ])
+    mock_df = pd.DataFrame(
+        [
+            {
+                "arxiv_id": "2508.17872",
+                "owner_student_id": "23120364",
+                "owner_name": "Pham Minh Thong",
+                "order_in_range": 1,
+            },
+            {
+                "arxiv_id": "2509.01047",
+                "owner_student_id": "23120358",
+                "owner_name": "Nguyen Tien Thanh",
+                "order_in_range": 1,
+            },
+        ]
+    )
     mock_df.to_parquet(manifest_path)
 
     output_dir = tmp_path / "raw"

@@ -7,7 +7,7 @@
 
 Dự án xây dựng một pipeline xử lý dữ liệu học thuật tái lập hoàn chỉnh từ đầu đến cuối:
 ```text
-arXiv ID (15.000 bài)
+arXiv ID (toàn bộ dải được giao; số lượng xác minh bằng discovery)
   └── Crawl toàn bộ phiên bản (v1...vN) qua export.arxiv.org + Lọc ảnh
       └── Thu thập Metadata & References qua Semantic Scholar API
           └── Phân tích cây phân cấp LaTeX (Document Tree Hierarchy)
@@ -49,6 +49,14 @@ cp .env.example .env
 - `SEMANTIC_SCHOLAR_API_KEY`: API key Semantic Scholar (tùy chọn, nếu chưa có hệ thống tự động chạy chế độ rate limit an toàn 1 req/s).
 - `HF_TOKEN`: Hugging Face write token cá nhân để tải dataset.
 - `ARXIV_CONTACT_EMAIL`: Email liên hệ trong `User-Agent` tuân thủ quy tắc arXiv API.
+
+## Chạy Colab và benchmark toàn bộ nhóm
+
+Hướng dẫn hiện hành: [COLAB_RUNBOOK.md](docs/COLAB_RUNBOOK.md). Notebook: [IDS13_M1_Colab.ipynb](notebooks/IDS13_M1_Colab.ipynb).
+
+Discovery cũ sinh thiếu dải qua tháng, nên manifest cũ không dùng cho full benchmark. Lệnh `discover` hiện truy vấn metadata thật, lưu bằng chứng và checksum. Checkpoint schema cũ được kiểm tra lại thay vì tin cờ `success`.
+
+Benchmark chính thức chạy toàn bộ nhóm trên Colab CPU, tính delay/retry, có thể chia nhiều phiên và tổng hợp log. `benchmark --stage crawl` chạy thực, không còn placeholder. Các lệnh `parse`, `label`, `train`, `export` vẫn là placeholder và chưa được xem là đã triển khai.
 
 ---
 

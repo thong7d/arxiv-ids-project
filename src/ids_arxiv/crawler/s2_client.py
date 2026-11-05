@@ -1,107 +1,97 @@
-"""
-Semantic Scholar API client for fetching paper references and external arXiv IDs.
-"""
+"""Semantic Scholar references with explicit status and paged responses."""
 
 import os
-from typing import Any, Dict, Optional
 
 import requests
 
-from ..discovery import to_dir_id
-from .rate_limiter import s2_limiter
+from ..discovery import to_arxiv_id, to_dir_id
+from .http import RequestFailure, get_response
+from .rate_limiter import PoliteRateLimiter, s2_limiter
 
 S2_BASE_URL = "https://api.semanticscholar.org/graph/v1/paper/arXiv:"
 
 
 class SemanticScholarClient:
-    """Client for querying Semantic Scholar paper references."""
-
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key=None, events=None):
         self.api_key = api_key or os.getenv("SEMANTIC_SCHOLAR_API_KEY", "").strip() or None
         self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": "FIT-HCMUS-IDS-Group13/1.0 (contact: thongpham796@gmail.com)"
-        })
+        self.session.headers["User-Agent"] = "FIT-HCMUS-IDS-Group13/2.0"
         if self.api_key:
             self.session.headers["x-api-key"] = self.api_key
+        self.limiter = PoliteRateLimiter(1.05) if self.api_key else s2_limiter
+        self.events = events
+        self.last_status = {"state": "pending", "success": False}
 
-    def get_paper_references(self, arxiv_id: str, max_retries: int = 3) -> Dict[str, Any]:
-        """
-        Query Semantic Scholar for references of a given arXiv ID.
-        Returns a dict mapping ref_arxiv_id (in yymm-id format) -> ReferenceItem dict.
-        """
-        clean_id = arxiv_id.split("v")[0]
-        url = f"{S2_BASE_URL}{clean_id}"
-        params = {
-            "fields": "references,references.externalIds,references.title,references.year,references.authors,references.venue"
-        }
-
-        retries = 0
-        while retries <= max_retries:
-            s2_limiter.wait()
-            try:
-                resp = self.session.get(url, params=params, timeout=20)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    raw_refs = data.get("references", []) or []
-                    return self._process_references(raw_refs)
-
-                elif resp.status_code == 404:
-                    # Paper not indexed yet by Semantic Scholar
-                    return {}
-
-                elif resp.status_code == 429:
-                    retries += 1
-                    if not self.api_key:
-                        # Without API key, public pool is throttled, don't stall pipeline
-                        if retries >= 1:
-                            return {}
-                        s2_limiter.wait(extra_delay=2.0)
-                    else:
-                        retry_after = 2.0 * (2 ** (retries - 1))
-                        s2_limiter.wait(extra_delay=retry_after)
-                    continue
-
-                else:
-                    retries += 1
-                    continue
-
-            except requests.RequestException:
-                retries += 1
-                s2_limiter.wait(extra_delay=3.0)
-
-        return {}
-
-    def _process_references(self, raw_refs: list) -> Dict[str, Any]:
-        """Extract references that contain an external arXiv ID and format keys."""
-        processed: Dict[str, Any] = {}
-        for r in raw_refs:
-            if not isinstance(r, dict):
-                continue
-
-            external_ids = r.get("externalIds") or {}
-            ref_arxiv = external_ids.get("ArXiv") or external_ids.get("arxiv")
-            if not ref_arxiv:
-                continue
-
-            # Format key as yymm-id
-            key_id = to_dir_id(ref_arxiv)
-
-            # Authors
-            authors_data = r.get("authors") or []
-            authors_list = [a.get("name", "").strip() for a in authors_data if isinstance(a, dict) and a.get("name")]
-
-            # Year
-            year_val = r.get("year")
-            submission_date = f"{year_val}-01-01T00:00:00Z" if year_val else ""
-
-            processed[key_id] = {
-                "title": (r.get("title") or "").strip(),
-                "authors": authors_list,
-                "submission_date": submission_date,
-                "s2_id": r.get("paperId") or "",
-                "venue": r.get("venue") or None,
-                "year": year_val,
+    def get_paper_references(self, arxiv_id, max_retries=3):
+        refs = {}
+        offset = 0
+        raw_count = 0
+        try:
+            while True:
+                with get_response(
+                    self.session,
+                    f"{S2_BASE_URL}{to_arxiv_id(arxiv_id)}/references",
+                    self.limiter,
+                    params={
+                        "fields": "title,authors,year,venue,externalIds",
+                        "offset": offset,
+                        "limit": 1000,
+                    },
+                    attempts=max_retries + 1,
+                    events=self.events,
+                ) as response:
+                    data = response.json()
+                raw = [entry.get("citedPaper") for entry in data.get("data", [])]
+                raw_count += len(raw)
+                refs.update(self._process_references(raw))
+                next_offset = data.get("next")
+                if next_offset is None:
+                    break
+                if int(next_offset) <= offset:
+                    raise ValueError("Non-advancing Semantic Scholar pagination")
+                offset = int(next_offset)
+            self.last_status = {
+                "state": "downloaded" if raw_count else "empty",
+                "success": True,
+                "raw_count": raw_count,
+                "arxiv_count": len(refs),
+                "error": None,
             }
+        except RequestFailure as error:
+            self.last_status = {
+                "state": "retryable_error"
+                if error.retryable
+                else ("not_indexed" if error.status_code == 404 else "rejected"),
+                "success": False,
+                "http_status": error.status_code,
+                "error": str(error),
+                "raw_count": raw_count,
+            }
+        except (ValueError, KeyError) as error:
+            self.last_status = {"state": "invalid_response", "success": False, "error": str(error)}
+        return refs
 
+    def _process_references(self, raw_refs):
+        processed = {}
+        for reference in raw_refs:
+            if not isinstance(reference, dict):
+                continue
+            external = reference.get("externalIds") or {}
+            arxiv_id = external.get("ArXiv") or external.get("arxiv")
+            if not arxiv_id:
+                continue
+            processed[to_dir_id(arxiv_id)] = {
+                "title": (reference.get("title") or "").strip(),
+                "authors": [
+                    author["name"].strip()
+                    for author in reference.get("authors") or []
+                    if isinstance(author, dict) and author.get("name")
+                ],
+                "submission_date": None,  # year is not a submission date
+                "s2_id": reference.get("paperId") or "",
+                "venue": reference.get("venue"),
+                "year": reference.get("year"),
+                "doi": external.get("DOI"),
+                "date_source": "unknown",
+            }
         return processed

@@ -13,7 +13,9 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .discovery import build_manifest, load_members
+from .benchmark import BenchmarkSession, summarize_sessions
+from .discovery import discover_publications, load_members
+from .storage import atomic_json, sha256_file
 from .validator import (
     validate_parquet_tables,
     validate_processed_paper,
@@ -47,7 +49,9 @@ def discover(
     console.print(f"[bold cyan]Reading members config from {config}...[/bold cyan]")
     try:
         members = load_members(config)
-        console.print(f"[green][OK] Successfully loaded and validated {len(members)} member ranges.[/green]")
+        console.print(
+            f"[green][OK] Successfully loaded and validated {len(members)} member ranges.[/green]"
+        )
 
         table = Table(title="Group 13 Assigned arXiv Ranges")
         table.add_column("Student ID", style="cyan")
@@ -59,10 +63,31 @@ def discover(
             table.add_row(m.student_id, m.name, m.start_id, m.end_id)
         console.print(table)
 
-        manifest_df = build_manifest(members)
+        with BenchmarkSession(
+            output.parent.parent / "benchmark", campaign=output.parent.parent.name
+        ) as measured:
+            manifest_df = discover_publications(
+                members, output.parent / "discovery", events=measured.event
+            )
         output.parent.mkdir(parents=True, exist_ok=True)
-        manifest_df.to_parquet(output, index=False)
-        console.print(f"[bold green][OK] Manifest generated with {len(manifest_df)} total records at {output}[/bold green]")
+        temporary = output.with_suffix(".tmp")
+        manifest_df.to_parquet(temporary, index=False)
+        temporary.replace(output)
+        atomic_json(
+            output.with_suffix(".json"),
+            {
+                "verified_discovery": True,
+                "manifest_sha256": sha256_file(output),
+                "count": len(manifest_df),
+                "by_owner": {
+                    str(k): int(v)
+                    for k, v in manifest_df.groupby("owner_student_id").size().items()
+                },
+            },
+        )
+        console.print(
+            f"[bold green][OK] Manifest generated with {len(manifest_df)} total records at {output}[/bold green]"
+        )
 
     except Exception as e:
         console.print(f"[bold red]Discovery Error:[/bold red] {e}")
@@ -99,13 +124,15 @@ def validate(
 
     if stage == "raw":
         import re
-        paper_dirs = [
-            d for d in path.iterdir()
-            if d.is_dir() and re.match(r"^\d{4}[-_]\d+", d.name)
-        ] if path.exists() else []
+
+        paper_dirs = (
+            [d for d in path.iterdir() if d.is_dir() and re.match(r"^\d{4}[-_]\d+", d.name)]
+            if path.exists()
+            else []
+        )
         if not paper_dirs:
             console.print("[yellow]No paper directories found in path.[/yellow]")
-            return
+            raise typer.Exit(code=1)
 
         all_valid = True
         for pdir in paper_dirs:
@@ -142,7 +169,9 @@ def validate(
         if not res["valid"]:
             console.print(f"[red][FAIL] Parquet export invalid:[/red] {res}")
             raise typer.Exit(code=1)
-        console.print("[bold green][OK] All 7 Parquet tables conform to course schemas.[/bold green]")
+        console.print(
+            "[bold green][OK] All 7 Parquet tables conform to course schemas.[/bold green]"
+        )
     else:
         console.print(f"[red]Unknown stage '{stage}'. Choose 'raw', 'processed', or 'hf'.[/red]")
         raise typer.Exit(code=1)
@@ -274,9 +303,40 @@ def benchmark(
         "-s",
         help="Benchmark stage: 'crawl' or 'parse'.",
     ),
+    manifest: Path = typer.Option(Path("data/manifests/papers.parquet"), "--manifest"),
+    output: Path = typer.Option(Path("data/benchmark-full/raw"), "--output"),
+    config: Path = typer.Option(Path("configs/members.csv"), "--config"),
+    max_hours: float = typer.Option(10.0, "--max-hours", min=0.1, max=11.0),
+    summary_only: bool = typer.Option(False, "--summary-only"),
 ):
     """Run performance benchmarking for Google Colab CPU report."""
-    console.print(f"[bold cyan]Benchmark command placeholder for {stage}[/bold cyan]")
+    import os
+
+    from .crawler.runner import run_crawling_pipeline
+
+    if stage != "crawl":
+        raise typer.BadParameter("Parser benchmark is not implemented yet")
+    if summary_only:
+        result = summarize_sessions(output.parent / "benchmark")
+        atomic_json(output.parent / "benchmark_summary.json", result)
+        console.print(result)
+        return
+    if not (Path("/content").is_dir() and os.getenv("COLAB_RELEASE_TAG")):
+        raise typer.BadParameter("Final benchmark must run on Google Colab CPU")
+    import json
+
+    evidence_path = manifest.with_suffix(".json")
+    if not evidence_path.exists():
+        raise typer.BadParameter("Run verified discovery; legacy manifests are not accepted")
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    if evidence.get("manifest_sha256") != sha256_file(manifest) or not evidence.get(
+        "verified_discovery"
+    ):
+        raise typer.BadParameter("Manifest checksum/provenance mismatch")
+    run_crawling_pipeline(manifest, output, members_config=config, max_seconds=max_hours * 3600)
+    atomic_json(
+        output.parent / "benchmark_summary.json", summarize_sessions(output.parent / "benchmark")
+    )
 
 
 if __name__ == "__main__":

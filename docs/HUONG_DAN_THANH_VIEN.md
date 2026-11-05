@@ -1,4 +1,6 @@
 # HƯỚNG DẪN CHI TIẾT DÀNH CHO THÀNH VIÊN NHÓM 13
+
+> Cập nhật 01/11/2026: dùng [COLAB_RUNBOOK.md](COLAB_RUNBOOK.md) cho workflow crawl tập trung. Không chạy ba crawler độc lập để vượt rate limit. Benchmark cuối phải đo toàn bộ nhóm trên Colab CPU, gồm delay/retry, được chia nhiều phiên có log. Các số lượng bài và tỷ lệ tiết kiệm dung lượng chưa đo trong hướng dẫn cũ không phải kết quả thực nghiệm.
 **(TỪ THIẾT LẬP BAN ĐẦU ĐẾN HOÀN THÀNH PHASE 2 — CRAWLING)**
 
 Tài liệu này hướng dẫn chi tiết từng bước cho **Nguyễn Tiến Thành** và **Nguyễn Trịnh Quang** (hoặc bất kỳ thành viên nào tham gia dự án) từ lúc clone repository đến khi chạy hoàn thành Phase 2 (thu thập dữ liệu thô và kiểm định dữ liệu).
@@ -79,7 +81,7 @@ Chạy lệnh sau để đảm bảo 100% schemas và tests nền tảng đã ch
 ```powershell
 pytest tests/
 ```
-**Kỳ vọng:** Terminal báo xanh `19 passed`!
+**Kỳ vọng:** Toàn bộ test được collect đều pass; không hardcode số lượng vì bộ test được bổ sung thường xuyên.
 
 ---
 
@@ -92,16 +94,16 @@ python -m ids_arxiv discover
 ```
 **Kết quả:**
 - Hiển thị bảng dải ID của Thông, Thành, Quang.
-- Tạo file manifest tổng hợp `data/manifests/papers.parquet` với hơn 11.000 bài báo được phân bổ rõ ràng theo `owner_student_id`.
+- Tạo manifest từ discovery thực tế với `owner_student_id`, thống kê theo thành viên và checksum; không dùng manifest 11.096 dòng từ thuật toán cũ.
 
 ---
 
 ## 📥 PHẦN 4: CHẠY THU THẬP DỮ LIỆU (PHASE 2 — CRAWLING)
 
 Hệ thống crawler đã được tích hợp sẵn các tiêu chuẩn kỹ thuật:
-- **Nghi thức arXiv API an toàn:** Tự động giãn cách 3 giây giữa các request, không lo bị chặn IP.
+- **Nghi thức arXiv API:** Giãn cách tối thiểu 3 giây; vẫn có thể gặp lỗi mạng hoặc giới hạn từ dịch vụ và cần retry có log.
 - **Tự động tải đa phiên bản:** Tải trọn vẹn `v1, v2, ...` qua mirror `export.arxiv.org`.
-- **Tự động lọc ảnh nhị phân (Figure Stripping):** Sau khi giải nén, tự động xóa sạch các file `.png, .jpg, .pdf, .eps`, giúp giảm **95% - 98% dung lượng đĩa** mà vẫn giữ nguyên mã nguồn LaTeX `figure`.
+- **Figure Stripping:** Lọc ảnh/binary, giữ mã LaTeX `figure`; tỷ lệ tiết kiệm chỉ được báo sau khi đo trên corpus thực tế.
 - **Checkpoint & Resume:** Nếu đang chạy mà bị mất mạng hoặc tắt máy, bạn chỉ cần gõ lại lệnh; hệ thống sẽ bỏ qua các bài đã xong và chạy tiếp tục.
 
 ### 4.1. Chạy thử nghiệm Pilot 10 bài theo dải cá nhân (Khuyên làm trước)
@@ -125,7 +127,7 @@ Mỗi thành viên gõ đúng lệnh theo MSSV của mình để cào thử 10 b
 ### 4.2. Chạy thu thập dữ liệu đầy đủ cho dải cá nhân
 Khi đã quen thuộc với cấu trúc dữ liệu và muốn cào toàn bộ dải bài được giao:
 
-- **Dành cho Thông (3.175 bài: `2508.17872` → `2509.01046`):**
+- **Dành cho Thông (số bài chốt bằng discovery: `2508.17872` → `2509.01046`):**
   ```powershell
   python -m ids_arxiv crawl --student-id 23120364 --output data/raw --resume
   ```

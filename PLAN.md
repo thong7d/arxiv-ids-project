@@ -1,5 +1,9 @@
 # Kế hoạch triển khai đồ án IDS – Nhóm 13
 
+> Cập nhật 01/11/2026 theo giải đáp mới của giảng viên: benchmark cuối chạy **toàn bộ dữ liệu của nhóm trên Google Colab CPU**, gồm delay/retry. Được chia nhiều phiên với checkpoint và log từng phiên. Sample chỉ dùng pilot. Được crawl nhiều lượt; báo kết quả lượt đầu và sau phục hồi. Số bài thực tế lấy từ manifest discovery đã xác minh, không mặc định 15.000.
+>
+> Lịch điều chỉnh: 01–02/11 sửa crawler/benchmark và kết nối Colab; 02–10/11 full crawl qua nhiều phiên; 02–11/11 M2 theo shard đã validate; 08–12/11 labels; 13–16/11 model; các deadline nộp bên dưới giữ nguyên. Nộp URL Book ngày 06/11 với số liệu tạm được ghi nhãn rõ ràng, cập nhật kết quả đầy đủ trước hạn Poster.
+
 ## 1. Tóm tắt và các quyết định đã khóa
 
 Mục tiêu là xây dựng một pipeline tái lập hoàn chỉnh:
@@ -173,7 +177,7 @@ Các artifact nội bộ như crawl status, labels, features, benchmark và erro
 ### Phase 1 — Đặc tả dữ liệu, fixture và kiểm thử nền
 
 **Thời gian:** 26/10/2026  
-**Mô tả:** Khóa schema và hành vi pipeline trước khi chạy trên 15.000 bài.
+**Mô tả:** Khóa schema và hành vi pipeline trước khi chạy trên toàn bộ dải ID được giao; số lượng chỉ chốt sau discovery thực tế.
 
 **Việc cần làm**
 
@@ -404,8 +408,11 @@ Các trường hợp không có TeX vẫn có metadata, status và thư mục ve
 **Benchmark**
 
 - Google Colab CPU cố định.
-- M1: benchmark một sample phân tầng cố định, báo riêng measured sample wall time và production full-corpus wall time; không giả lập số full corpus thành số đo Colab.
-- M2: benchmark sample cố định đủ loại source/version, tối thiểu ba lần.
+- M1: benchmark toàn bộ dải ID ba thành viên trên Colab CPU. Sample chỉ dùng thử nghiệm. Runtime gồm discovery, download, xử lý, delay, backoff, retry và checkpoint trong lượt đo. Không dùng cache pilot để thay cold-start full benchmark.
+- M2: benchmark toàn bộ corpus nguồn hợp lệ trên Colab CPU; ghi riêng số publication/version không có TeX. Sample chỉ dùng debug.
+- Cho phép nhiều phiên Colab: lưu session ID, commit, manifest checksum, môi trường, thời gian, HTTP attempt và checkpoint để đối chiếu. Runtime thực thi cộng các phiên; thời gian lịch và khoảng chờ giữa phiên báo riêng.
+- Tổng hợp RAM bằng peak lớn nhất và trung bình có trọng số theo thời gian; không cộng các peak. Phân biệt disk usage của volume với dung lượng corpus thực tế.
+- Crawl phục hồi được phép: báo success/coverage của lượt đầu và sau tối đa ba lượt phục hồi, giữ đầy đủ danh sách lỗi cuối và lịch sử attempt.
 - Ghi Python/package versions, CPU, peak RAM, peak disk và random seed.
 
 **Cổng nghiệm thu**
@@ -728,7 +735,7 @@ Dự án chỉ hoàn thành khi:
 ### Rủi ro và biện pháp
 
 - **Rate limit/network:** centralized scheduler, cache, retry queue, checkpoint và buffer nhiều ngày.
-- **Colab mất session:** benchmark theo sample cố định; production có checkpoint trên Drive.
+- **Colab mất session:** tiếp tục full benchmark từ checkpoint Drive, giữ log từng phiên và tổng hợp có đối chiếu; không thay bằng sample.
 - **Source không chuẩn:** giữ failure taxonomy, manual override cho main file, không âm thầm bỏ bài.
 - **Pseudo-label bias:** high-precision rules, manual audit và báo riêng manual/auto MRR.
 - **Class imbalance:** class weighting và đánh giá theo ranking, không chỉ accuracy.

@@ -1,202 +1,259 @@
-"""
-Crawl runner orchestrating metadata discovery, multi-version downloads,
-figure stripping, Semantic Scholar reference enrichment, and checkpointing.
-"""
+"""Durable publication/version checkpoints and observable crawl sessions."""
 
 import json
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from rich.console import Console
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
-from ..discovery import load_members, to_arxiv_id, to_dir_id
+from ..benchmark import BenchmarkSession
+from ..discovery import load_members, parse_atom, to_arxiv_id, to_dir_id
+from ..storage import atomic_json, sha256_file, utc_now, verify_inventory
+from ..validator import validate_raw_paper
 from .arxiv_client import ArxivCrawler
+from .http import RequestFailure, get_response
+from .rate_limiter import arxiv_limiter
 from .s2_client import SemanticScholarClient
 
-console = Console()
+
+def load_json(path, default=None):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
 
 
-def crawl_paper(
-    arxiv_id: str,
-    output_dir: Path,
-    arxiv_crawler: ArxivCrawler,
-    s2_client: SemanticScholarClient,
-    resume: bool = True,
-) -> Dict[str, Any]:
-    """
-    Crawl a single publication: all versions, metadata, and references.
-    Atomic write ensures no partial states remain.
-    """
-    clean_id = to_arxiv_id(arxiv_id)
-    dir_name = to_dir_id(clean_id)
-    paper_dir = output_dir / dir_name
-    status_file = paper_dir / "crawl_status.json"
+def valid_version(paper_dir, value):
+    directory = paper_dir / f"v{value['version']}"
+    if not value.get("success"):
+        return False
+    if value.get("state") == "pdf_only":
+        return directory.is_dir() and not any(directory.iterdir())
+    return verify_inventory(directory, value.get("files", {}))
 
-    # Checkpoint check
-    if resume and status_file.exists():
+
+def enrich_reference_dates(references, crawler, cache_path):
+    cache = load_json(cache_path, {})
+    missing = sorted(to_arxiv_id(key) for key in references if to_arxiv_id(key) not in cache)
+    for start in range(0, len(missing), 100):
+        batch = missing[start : start + 100]
         try:
-            with open(status_file, "r", encoding="utf-8") as f:
-                prev_status = json.load(f)
-            if prev_status.get("success"):
-                return prev_status
-        except Exception:
-            pass
+            with get_response(
+                crawler.session,
+                "https://export.arxiv.org/api/query",
+                arxiv_limiter,
+                params={"id_list": ",".join(batch), "max_results": len(batch)},
+                events=crawler.events,
+            ) as response:
+                entries, _ = parse_atom(response.content)
+            for entry in entries:
+                cache[entry["arxiv_id"]] = entry["submission_date"]
+            atomic_json(cache_path, cache)
+        except (RequestFailure, ValueError):
+            break  # Unknown stays null and is retried on the next recovery pass.
+    for key, value in references.items():
+        date = cache.get(to_arxiv_id(key))
+        value.update(submission_date=date, date_source="arxiv_atom" if date else "unknown")
+    return all(value.get("submission_date") for value in references.values())
 
+
+def crawl_paper(arxiv_id, output_dir, arxiv_crawler, s2_client, resume=True):
+    clean_id = to_arxiv_id(arxiv_id)
+    paper_dir = Path(output_dir) / to_dir_id(clean_id)
     paper_dir.mkdir(parents=True, exist_ok=True)
-    crawl_record: Dict[str, Any] = {
+    status_file = paper_dir / "crawl_status.json"
+    previous = load_json(status_file, {}) if resume else {}
+    trusted = previous.get("schema_version") == 2
+    if trusted and previous.get("success"):
+        hashes_ok = all(
+            (paper_dir / name).is_file() and sha256_file(paper_dir / name) == digest
+            for name, digest in previous.get("checksums", {}).items()
+        )
+        if (
+            previous.get("checksums")
+            and hashes_ok
+            and previous.get("versions")
+            and all(valid_version(paper_dir, value) for value in previous["versions"])
+            and validate_raw_paper(paper_dir)["valid"]
+        ):
+            return {**previous, "cache_hit": True}
+
+    record = {
+        "schema_version": 2,
         "arxiv_id": clean_id,
-        "dir_name": dir_name,
+        "dir_name": paper_dir.name,
         "success": False,
-        "versions": [],
-        "total_initial_bytes": 0,
-        "total_stripped_bytes": 0,
-        "total_saved_bytes": 0,
-        "num_references": 0,
+        "source_success": False,
+        "cache_hit": False,
+        "started_at": utc_now(),
+        "attempt_count": previous.get("attempt_count", 0) + 1,
+        "versions": previous.get("versions", []) if trusted else [],
+        "references_status": {"state": "pending", "success": False},
         "error": None,
     }
+    started = time.monotonic()
+    atomic_json(status_file, record)
+    metadata = load_json(paper_dir / "metadata.json") if trusted else None
+    expected = previous.get("expected_versions") if trusted else None
+    if not metadata or not expected:
+        result = arxiv_crawler.fetch_metadata(clean_id)
+        if result is None:
+            record.update(
+                error=getattr(arxiv_crawler, "last_error", None) or "Metadata unavailable",
+                elapsed_seconds=time.monotonic() - started,
+            )
+            atomic_json(status_file, record)
+            return record
+        metadata, expected = result
+        atomic_json(paper_dir / "metadata.json", metadata)
+    record["expected_versions"] = expected
+    version_map = {value["version"]: value for value in record["versions"]}
+    for version in expected:
+        old = version_map.get(version)
+        if not (resume and old and valid_version(paper_dir, old)):
+            version_map[version] = arxiv_crawler.download_and_extract_version(
+                clean_id, version, paper_dir / f"v{version}"
+            )
+        record["versions"] = [version_map[v] for v in expected if v in version_map]
+        atomic_json(status_file, record)
+    record["source_success"] = bool(expected) and all(
+        valid_version(paper_dir, version_map[v]) for v in expected
+    )
 
-    # 1. Fetch arXiv Metadata and Version List
-    meta_res = arxiv_crawler.fetch_metadata(clean_id)
-    if not meta_res:
-        crawl_record["error"] = f"Failed to retrieve metadata from arXiv API for {clean_id}."
-        with open(status_file, "w", encoding="utf-8") as f:
-            json.dump(crawl_record, f, indent=2)
-        return crawl_record
-
-    metadata, versions = meta_res
-
-    # 2. Download and Extract Each Version
-    version_results = []
-    for v in versions:
-        vdir = paper_dir / f"v{v}"
-        vres = arxiv_crawler.download_and_extract_version(clean_id, v, vdir)
-        version_results.append(vres)
-        crawl_record["total_initial_bytes"] += vres.get("initial_bytes", 0)
-        crawl_record["total_stripped_bytes"] += vres.get("stripped_bytes", 0)
-        crawl_record["total_saved_bytes"] += vres.get("saved_bytes", 0)
-
-    crawl_record["versions"] = version_results
-
-    # 3. Fetch References from Semantic Scholar
-    references = s2_client.get_paper_references(clean_id)
-    crawl_record["num_references"] = len(references)
-
-    # 4. Atomic Write Output Files
-    # a. metadata.json
-    with open(paper_dir / "metadata.json", "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=2, ensure_ascii=False)
-
-    # b. references.json
-    with open(paper_dir / "references.json", "w", encoding="utf-8") as f:
-        json.dump(references, f, indent=2, ensure_ascii=False)
-
-    # c. crawl_status.json
-    all_succeeded = any(v.get("success") for v in version_results)
-    crawl_record["success"] = all_succeeded
-    if not all_succeeded:
-        crawl_record["error"] = "Failed to download/extract source files for all versions."
-    with open(status_file, "w", encoding="utf-8") as f:
-        json.dump(crawl_record, f, indent=2, ensure_ascii=False)
-
-    return crawl_record
+    refs_path = paper_dir / "references.json"
+    ref_status = previous.get("references_status", {}) if trusted else {}
+    refs_unchanged = (
+        previous.get("checksums", {}).get("references.json")
+        and refs_path.exists()
+        and sha256_file(refs_path) == previous["checksums"]["references.json"]
+    )
+    if resume and ref_status.get("success") and refs_unchanged:
+        references = load_json(refs_path, {})
+    else:
+        references = s2_client.get_paper_references(clean_id)
+        ref_status = s2_client.last_status.copy()
+    dates_complete = (
+        enrich_reference_dates(
+            references, arxiv_crawler, Path(output_dir).parent / "reference_dates.json"
+        )
+        if ref_status.get("success")
+        else False
+    )
+    ref_status["dates_complete"] = dates_complete
+    atomic_json(refs_path, references)
+    record["references_status"] = ref_status
+    record.update(
+        num_references=len(references),
+        total_initial_bytes=sum(v.get("initial_bytes", 0) for v in record["versions"]),
+        total_stripped_bytes=sum(v.get("stripped_bytes", 0) for v in record["versions"]),
+        total_saved_bytes=sum(v.get("saved_bytes", 0) for v in record["versions"]),
+        checksums={
+            name: sha256_file(paper_dir / name) for name in ("metadata.json", "references.json")
+        },
+    )
+    validation = validate_raw_paper(paper_dir)
+    record["validation"] = validation
+    record["success"] = bool(
+        record["source_success"]
+        and ref_status.get("success")
+        and dates_complete
+        and validation["valid"]
+    )
+    record.update(ended_at=utc_now(), elapsed_seconds=time.monotonic() - started)
+    if not record["success"]:
+        record["error"] = (
+            "Incomplete sources, references, reference dates or validation; see component states"
+        )
+    atomic_json(status_file, record)
+    return record
 
 
 def run_crawling_pipeline(
-    manifest_path: Path,
-    output_dir: Path,
-    limit: Optional[int] = None,
-    pilot_mode: bool = False,
-    members_config: Optional[Path] = None,
-    resume: bool = True,
-    student_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """
-    Run centralized crawler across paper manifest.
-    If student_id is provided, filters manifest to that member's allocated papers.
-    If pilot_mode=True, selects 10 papers per member (or 10 papers for the specified student).
-    """
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"Manifest not found: {manifest_path}. Run 'discover' first.")
-
-    manifest_df = pd.read_parquet(manifest_path)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
+    manifest_path,
+    output_dir,
+    limit=None,
+    pilot_mode=False,
+    members_config=None,
+    resume=True,
+    student_id=None,
+    max_seconds=None,
+):
+    manifest_path, output_dir = Path(manifest_path), Path(output_dir)
+    frame = pd.read_parquet(manifest_path)
     if student_id:
-        manifest_df = manifest_df[manifest_df["owner_student_id"] == str(student_id)].copy()
-        if manifest_df.empty:
-            console.print(f"[red]No papers found in manifest for student_id: {student_id}[/red]")
-            return {"total_attempted": 0, "success_count": 0}
-
+        frame = frame[frame["owner_student_id"].astype(str) == str(student_id)]
+    if frame.empty:
+        return {"total_attempted": 0, "success_count": 0}
     if pilot_mode:
-        if student_id:
-            target_df = manifest_df.head(10).copy()
-        elif members_config and members_config.exists():
-            members = load_members(members_config)
-            pilot_records = []
-            for m in members:
-                m_sub = manifest_df[manifest_df["owner_student_id"] == m.student_id]
-                pilot_records.append(m_sub.head(10))
-            target_df = pd.concat(pilot_records).reset_index(drop=True)
-        else:
-            target_df = manifest_df.head(30).copy()
-    elif limit is not None:
-        target_df = manifest_df.head(limit).copy()
-    else:
-        target_df = manifest_df.copy()
-
-    total_papers = len(target_df)
-    console.print(f"[bold cyan]Starting crawl pipeline for {total_papers} papers...[/bold cyan]")
-
-    arxiv_crawler = ArxivCrawler()
-    s2_client = SemanticScholarClient()
-
-    results: List[Dict[str, Any]] = []
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Crawling arXiv corpus...", total=total_papers)
-
-        for _, row in target_df.iterrows():
-            aid = row["arxiv_id"]
-            progress.update(task, description=f"Processing {aid}...")
-            res = crawl_paper(
-                arxiv_id=aid,
-                output_dir=output_dir,
-                arxiv_crawler=arxiv_crawler,
-                s2_client=s2_client,
-                resume=resume,
-            )
-            results.append(res)
-            progress.advance(task)
-
-    # Compute summary metrics
-    success_count = sum(1 for r in results if r.get("success"))
-    total_saved_mb = sum(r.get("total_saved_bytes", 0) for r in results) / (1024 * 1024)
-    total_refs = sum(r.get("num_references", 0) for r in results)
-
+        frame = frame.groupby("owner_student_id", group_keys=False).head(10)
+    if limit is not None:
+        frame = frame.head(limit)
+    if members_config:
+        members = load_members(Path(members_config))
+        for row in frame.itertuples():
+            if not any(
+                m.student_id == str(row.owner_student_id) and m.contains(row.arxiv_id)
+                for m in members
+            ):
+                raise ValueError(f"Invalid manifest ownership for {row.arxiv_id}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    campaign_path = output_dir.parent / "campaign.json"
+    campaign = load_json(campaign_path)
+    fingerprint = sha256_file(manifest_path)
+    if campaign and campaign["manifest_sha256"] != fingerprint:
+        raise ValueError("Campaign manifest changed; use a new campaign directory")
+    if not campaign:
+        campaign = {
+            "campaign_id": output_dir.parent.name,
+            "manifest_sha256": fingerprint,
+            "started_at": utc_now(),
+            "mode": "pilot" if pilot_mode or limit else "full",
+        }
+        atomic_json(campaign_path, campaign)
+    if campaign["mode"] == "pilot" and not (pilot_mode or limit):
+        raise ValueError("A pilot directory cannot be reused as a cold-start full benchmark")
+    metadata = load_json(manifest_path.parent / "discovery" / "metadata.json", {})
     summary = {
-        "total_attempted": total_papers,
-        "success_count": success_count,
-        "success_rate": round(success_count / max(1, total_papers) * 100, 2),
-        "total_saved_mb": round(total_saved_mb, 2),
-        "total_references_collected": total_refs,
-        "avg_references_per_paper": round(total_refs / max(1, success_count), 2),
+        "selected_publications": len(frame),
+        "total_attempted": 0,
+        "success_count": 0,
+        "source_success_count": 0,
+        "reference_success_count": 0,
+        "cache_hits": 0,
+        "campaign_id": campaign["campaign_id"],
+        "failed_ids": [],
     }
-
-    # Save run summary
-    with open(output_dir / "crawl_summary.json", "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2)
-
-    console.print(f"[bold green][OK] Crawl finished. Success: {success_count}/{total_papers} ({summary['success_rate']}%)[/bold green]")
-    console.print(f"[bold green]Saved space by figure stripping: {summary['total_saved_mb']} MB[/bold green]")
-    console.print(f"[bold green]Total external references extracted: {total_refs}[/bold green]")
-
+    start = time.monotonic()
+    with BenchmarkSession(
+        output_dir.parent / "benchmark", campaign=campaign["campaign_id"]
+    ) as benchmark:
+        crawler = ArxivCrawler(metadata_cache=metadata, events=benchmark.event)
+        s2 = SemanticScholarClient(events=benchmark.event)
+        for row in frame.itertuples():
+            if max_seconds is not None and time.monotonic() - start >= max_seconds:
+                break
+            result = crawl_paper(row.arxiv_id, output_dir, crawler, s2, resume)
+            summary["total_attempted"] += 1
+            summary["success_count"] += int(result["success"])
+            summary["source_success_count"] += int(result.get("source_success", False))
+            summary["reference_success_count"] += int(
+                result.get("references_status", {}).get("success", False)
+            )
+            summary["cache_hits"] += int(result.get("cache_hit", False))
+            if not result["success"]:
+                summary["failed_ids"].append(row.arxiv_id)
+            summary.update(
+                updated_at=utc_now(),
+                session_id=benchmark.session_id,
+                elapsed_seconds=time.monotonic() - start,
+            )
+            atomic_json(output_dir / "crawl_summary.json", summary)
+            if summary["total_attempted"] % 10 == 0 or not result["success"]:
+                print(
+                    f"Crawl {summary['total_attempted']}/{len(frame)}: "
+                    f"complete={summary['success_count']} sources={summary['source_success_count']} "
+                    f"references={summary['reference_success_count']} last={row.arxiv_id}",
+                    flush=True,
+                )
+    atomic_json(output_dir.parent / f"pass-{benchmark.session_id}.json", summary)
     return summary
