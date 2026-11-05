@@ -129,10 +129,14 @@ class ArxivCrawler:
             "error": None,
             "files": {},
         }
-        # Extraction happens in a new sibling staging directory, never in an
-        # already validated version. Temporary cleanup is confined to this path.
+        # Extraction happens in a local staging directory on the local SSD,
+        # never directly inside Google Drive FUSE. This prevents uploading
+        # tens of megabytes of raw binaries and images that get deleted immediately,
+        # which throttles and crashes the Colab Google Drive FUSE client.
+        staging_dir = Path(tempfile.gettempdir()) / "ids_staging"
+        staging_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(
-            prefix=f".v{version}-", dir=target_vdir.parent
+            prefix=f".v{version}-", dir=staging_dir
         ) as temporary:
             staging = Path(temporary)
             archive = staging / "source.part"
@@ -184,17 +188,19 @@ class ArxivCrawler:
                 inventory = file_inventory(extracted)
                 if not inventory:
                     raise ValueError("Source contains no usable text files")
-                target_vdir.mkdir(exist_ok=True)
-                # Remove old version files only after a replacement is ready.
-                # Preserve a backup for recovery; it remains outside vN/.
-                if any(target_vdir.iterdir()):
-                    backup = target_vdir.with_name(f".previous-{target_vdir.name}")
-                    if backup.exists():
-                        shutil.rmtree(backup, ignore_errors=True)
-                    target_vdir.rename(backup)
-                else:
-                    target_vdir.rmdir()
-                extracted.rename(target_vdir)
+                target_vdir.mkdir(parents=True, exist_ok=True)
+                # Clear target_vdir of any stale files safely
+                for old_f in target_vdir.glob("*"):
+                    if old_f.is_file():
+                        old_f.unlink()
+                    elif old_f.is_dir():
+                        shutil.rmtree(old_f, ignore_errors=True)
+                # Copy clean stripped text-only files from local SSD staging to target_vdir
+                for path in extracted.rglob("*"):
+                    if path.is_file():
+                        dest = target_vdir / path.relative_to(extracted)
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(path, dest)
                 status.update(
                     success=True,
                     state="downloaded",

@@ -248,6 +248,8 @@ def run_crawling_pipeline(
                 elapsed_seconds=time.monotonic() - start,
             )
             atomic_json(output_dir / "crawl_summary.json", summary)
+            if hasattr(os, "sync"):
+                os.sync()
             if summary["total_attempted"] % 10 == 0 or not result["success"]:
                 print(
                     f"Crawl {summary['total_attempted']}/{len(frame)}: "
