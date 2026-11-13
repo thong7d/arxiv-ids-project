@@ -1,504 +1,138 @@
-# HƯỚNG DẪN CÀO DỮ LIỆU SONG SONG — THÀNH & QUANG
-**Dành cho: Nguyễn Tiến Thành (23120358) và Nguyễn Trịnh Quang (23120345)**
-*Cập nhật: 05/11/2026 — Phối hợp cào song song trên 3 Colab CPU riêng biệt*
-
-> [!IMPORTANT]
-> **Điều kiện bắt buộc:** Mỗi bạn chạy trên **tài khoản Google Colab riêng của cá nhân**, mount vào **cùng Drive chung của nhóm**. Tuyệt đối KHÔNG chạy 2 worker trên cùng 1 phiên Colab hay cùng 1 tài khoản Google.
-
----
-
-## 📌 PHÂN CÔNG DẢI ID (ĐÃ CHỐT — KHÔNG THAY ĐỔI)
-
-Theo `configs/members.csv` và bảng phân công chính thức:
-
-| Thành viên | MSSV | Dải arXiv ID | Ghi chú |
-|:---|:---:|:---|:---|
-| Phạm Minh Thông | 23120364 | `2508.17872` → `2509.01046` | **Đang cào** (PID: 3522 trên Colab Thông) |
-| **Nguyễn Tiến Thành** | **23120358** | **`2509.01047` → `2509.06046`** | **Bạn cào dải này** |
-| **Nguyễn Trịnh Quang** | **23120345** | **`2509.06047` → `2509.11046`** | **Bạn cào dải này** |
-
-> [!NOTE]
-> Dữ liệu được lưu theo thư mục mang mã bài (`2509-01047/`, `2509-06047/`...) — 3 dải hoàn toàn tách biệt nhau, **không bao giờ ghi đè dữ liệu của nhau** dù cùng mount vào 1 Drive.
-
----
-
-## 🧰 BƯỚC 0: CHUẨN BỊ TRƯỚC KHI MỞ COLAB
-
-### 0.1. Đăng ký Semantic Scholar API Key (cá nhân — bắt buộc)
-
-Nếu chưa có key riêng, làm ngay để tránh bị giới hạn 100 req/5 phút ở chế độ ẩn danh:
-
-1. Truy cập: https://www.semanticscholar.org/product/api
-2. Nhấn **"Request API Key"**, điền email sinh viên.
-3. Key thường được cấp trong vòng **24–48 giờ**. Nếu chưa có, hệ thống vẫn chạy được nhưng sẽ chậm hơn đáng kể (có thể dừng 5 phút sau mỗi 100 bài).
-
-### 0.2. Yêu cầu Thông cấp quyền Drive
-
-- Nhờ Thông chia sẻ thư mục Drive `IDS_Nhom13_Corpus_Backup` với **email Google cá nhân của bạn** (vai trò **Editor**).
-- Link thư mục Drive: https://drive.google.com/drive/folders/1NnyZolqKw5dIl_NsIW7BFMztqIXdetGI
-- Sau khi được thêm vào, thư mục sẽ hiện trong **"Shared with me"** trên Google Drive của bạn.
-
-### 0.3. Nhận file bundle từ Thông
-
-Thông sẽ gửi cho bạn 2 file (đã có sẵn trong thư mục Drive chung):
-- `ids13-code-28c10a118fd9.zip` — Source code bundle đã đóng gói
-- `ids13-code-28c10a118fd9.sha256` — File checksum để xác minh tính toàn vẹn
-
-**SHA-256 chuẩn:** `28c10a118fd96e0b63f39ed11d528274928ac6c188b818dae07263e60d5a2983`
-
----
-
-## ⚙️ BƯỚC 1: THIẾT LẬP COLAB (LÀM 1 LẦN ĐẦU DUY NHẤT)
-
-### 1.1. Mở Google Colab với đúng runtime
-
-1. Truy cập: https://colab.research.google.com
-2. Đăng nhập bằng **tài khoản Google cá nhân của bạn**.
-3. Vào menu **Runtime → Change runtime type** → Chọn **CPU** (không chọn GPU/TPU).
-
-> [!WARNING]
-> Tuyệt đối chọn CPU, không phải GPU/TPU. Script sẽ từ chối chạy và báo lỗi nếu phát hiện GPU runtime (kiểm tra `COLAB_GPU`). Tiêu chí chấm điểm đồ án yêu cầu benchmark trên Colab CPU.
-
-### 1.2. Thiết lập Secrets trong Colab
-
-1. Click biểu tượng 🔑 **"Secrets"** ở thanh bên trái (hoặc menu **Tools → Secrets**).
-2. Thêm 2 Secrets sau:
-
-| Tên Secret | Giá trị | Bật "Notebook access" |
-|:---|:---|:---:|
-| `ARXIV_CONTACT_EMAIL` | Email sinh viên của bạn (ví dụ: `23120358@student.hcmus.edu.vn`) | ✅ Bật |
-| `SEMANTIC_SCHOLAR_API_KEY` | API key của **bạn** (xem bước 0.1) | ✅ Bật |
-
-> [!IMPORTANT]
-> Mỗi bạn điền **API Key của chính mình**, không dùng chung key với Thông hay với nhau. Đây là lý do chính giúp 3 máy chạy song song mà không bị giới hạn tần suất chung.
-
----
-
-## 📓 BƯỚC 2: TẠO NOTEBOOK VÀ CÀI ĐẶT CÁC CELL
-
-Mở notebook mới trong Colab (New notebook). Thêm lần lượt các cell code sau:
-
----
-
-### 📌 CELL 1 — Setup: Đọc Secrets và Mount Drive
-
-```python
-# CELL 1: Setup - Đọc Secrets và mount Drive
-import os
-from google.colab import userdata, drive
-
-for name in ('ARXIV_CONTACT_EMAIL', 'SEMANTIC_SCHOLAR_API_KEY'):
-    os.environ[name] = userdata.get(name)
-print('Đã đọc hai Secrets; không hiển thị giá trị.')
-
-drive.mount('/content/drive')
-
-DRIVE_ROOT_PATH = '/content/drive/MyDrive/IDS_Nhom13_Corpus_Backup'
-import pathlib
-DRIVE_ROOT = pathlib.Path(DRIVE_ROOT_PATH)
-assert DRIVE_ROOT.is_dir(), f"Không thấy thư mục Drive: {DRIVE_ROOT_PATH}\nKiểm tra lại quyền truy cập Drive."
-print(f"✅ Drive đã mount. Thư mục nhóm: {DRIVE_ROOT}")
-```
-
-**Kết quả mong đợi:**
-```
-Đã đọc hai Secrets; không hiển thị giá trị.
-Mounted at /content/drive
-✅ Drive đã mount. Thư mục nhóm: /content/drive/MyDrive/IDS_Nhom13_Corpus_Backup
-```
-
----
-
-### 📌 CELL 2 — Source: Xác minh checksum và giải nén code
-
-> [!IMPORTANT]
-> `SOURCE_SHA256` phải khớp chính xác với giá trị bên dưới. Đây là phiên bản code đã được kiểm định và đang chạy trên máy Thông. Tuyệt đối không tự thay đổi giá trị này.
-
-```python
-# CELL 2: Xác minh checksum source và giải nén
-from pathlib import Path
-import hashlib, zipfile
-
-# ===========================================================
-# SHA-256 CHUẨN CỦA BUNDLE — KHÔNG ĐƯỢC THAY ĐỔI GIÁ TRỊ NÀY
-SOURCE_SHA256 = '28c10a118fd96e0b63f39ed11d528274928ac6c188b818dae07263e60d5a2983'
-# ===========================================================
-
-CODE_ROOT = None
-archive = DRIVE_ROOT / f'ids13-code-{SOURCE_SHA256[:12]}.zip'
-
-assert archive.exists(), (
-    f"Không tìm thấy file bundle: {archive}\n"
-    "Kiểm tra lại Drive đã được chia sẻ và file đã có trong thư mục."
-)
-
-actual_hash = hashlib.sha256(archive.read_bytes()).hexdigest()
-assert actual_hash == SOURCE_SHA256, (
-    f"CHECKSUM MISMATCH!\n  Tính được: {actual_hash}\n  Mong đợi:   {SOURCE_SHA256}\n"
-    "File bundle có thể bị hỏng. Nhờ Thông upload lại."
-)
-
-CODE_ROOT = Path('/content') / f'ids13-code-{SOURCE_SHA256[:12]}'
-CODE_ROOT.mkdir(exist_ok=True)
-
-with zipfile.ZipFile(archive) as bundle:
-    for name in bundle.namelist():
-        assert (CODE_ROOT / name).resolve().is_relative_to(CODE_ROOT.resolve()), \
-            f"Path traversal detected: {name}"
-    bundle.extractall(CODE_ROOT)
-
-print(f'✅ Source verified: {SOURCE_SHA256[:12]}')
-print(f'   Code root: {CODE_ROOT}')
-```
-
-**Kết quả mong đợi:**
-```
-✅ Source verified: 28c10a118fd9
-   Code root: /content/ids13-code-28c10a118fd9
-```
-
----
-
-### 📌 CELL 3 — Cài package và chạy Tests
-
-```python
-# CELL 3: Cài đặt package và chạy kiểm thử
-import subprocess, sys
-
-assert CODE_ROOT is not None and CODE_ROOT.is_dir(), "Chạy CELL 2 trước!"
-
-print("📦 Cài đặt package ids_arxiv...")
-subprocess.run(
-    [sys.executable, "-m", "pip", "install", "-q", "-e", str(CODE_ROOT), "pytest"],
-    check=True
-)
-
-print("\n🧪 Chạy kiểm thử (pytest)...")
-result = subprocess.run(
-    [sys.executable, "-m", "pytest", "-q", "--tb=short"],
-    cwd=CODE_ROOT,
-    capture_output=True, text=True
-)
-print(result.stdout[-3000:] if len(result.stdout) > 3000 else result.stdout)
-if result.returncode != 0:
-    print("❌ TESTS THẤT BẠI! Liên hệ Thông trước khi tiếp tục.")
-    print(result.stderr[-1000:])
-else:
-    print("✅ Tất cả tests đã PASS!")
-```
-
-**Kết quả mong đợi:** Dòng cuối phải là `✅ Tất cả tests đã PASS!` (không có test nào FAIL).
-
----
-
-### 📌 CELL 4 — Launch Worker (cào dải ID của BẠN)
-
-> [!IMPORTANT]
-> Thay `STUDENT_ID` đúng theo MSSV của bạn. **Chỉ chạy cell này 1 lần.** Nếu chạy lại trong cùng phiên, hệ thống sẽ kiểm tra và báo lỗi nếu worker cũ còn đang sống.
-
-#### Nếu bạn là **Thành (23120358):**
-```python
-# CELL 4 — THÀNH (23120358): Launch worker cào dải 2509.01047 → 2509.06046
-import subprocess, sys, json, os
-from pathlib import Path
-
-assert CODE_ROOT is not None and CODE_ROOT.is_dir(), 'Chạy CELL 2 trước!'
-assert CODE_ROOT.name.endswith(SOURCE_SHA256[:12]), 'Source revision mismatch'
-
-# --- PHÂN CÔNG CÁ NHÂN ---
-MY_STUDENT_ID   = "23120358"      # MSSV của Thành
-MY_START_ID     = "2509.01047"    # Bài đầu tiên của Thành
-MY_END_ID       = "2509.06046"    # Bài cuối cùng của Thành
-MY_LOG_FILE     = DRIVE_ROOT / "m1-agent-23120358.log"
-MY_STATUS_FILE  = DRIVE_ROOT / "m1-launch-status-23120358.json"
-
-os.environ['IDS_SOURCE_SHA256'] = SOURCE_SHA256
-os.environ['IDS_STUDENT_ID']    = MY_STUDENT_ID
-
-for name in ('ARXIV_CONTACT_EMAIL', 'SEMANTIC_SCHOLAR_API_KEY'):
-    assert os.environ.get(name), 'Secret chưa được nạp: ' + name
-
-# Kiểm tra worker cũ còn sống không
-if MY_STATUS_FILE.exists():
-    prev = json.loads(MY_STATUS_FILE.read_text())
-    prev_pid = prev.get('pid')
-    if prev_pid:
-        cmd_file = Path('/proc') / str(prev_pid) / 'cmdline'
-        if cmd_file.exists() and b'colab_install_and_run.py' in cmd_file.read_bytes():
-            raise RuntimeError(
-                f'Worker cũ (PID {prev_pid}) đang chạy! '
-                'Không khởi động thêm. Chuyển sang cell Monitor để theo dõi.'
-            )
-
-log_handle = MY_LOG_FILE.open('a', buffering=1)
-worker = subprocess.Popen(
-    [
-        sys.executable,
-        str(CODE_ROOT / 'scripts/colab_install_and_run.py'),
-        '--root', str(DRIVE_ROOT),
-        '--student-id', MY_STUDENT_ID,
-        '--log-suffix', MY_STUDENT_ID,
-    ],
-    cwd=CODE_ROOT,
-    stdout=log_handle,
-    stderr=subprocess.STDOUT,
-    env=os.environ.copy()
-)
-print(f'✅ Worker THÀNH đã khởi động!')
-print(f'   PID: {worker.pid}')
-print(f'   Dải: {MY_START_ID} → {MY_END_ID}')
-print(f'   Log: {MY_LOG_FILE}')
-```
-
-#### Nếu bạn là **Quang (23120345):**
-```python
-# CELL 4 — QUANG (23120345): Launch worker cào dải 2509.06047 → 2509.11046
-import subprocess, sys, json, os
-from pathlib import Path
-
-assert CODE_ROOT is not None and CODE_ROOT.is_dir(), 'Chạy CELL 2 trước!'
-assert CODE_ROOT.name.endswith(SOURCE_SHA256[:12]), 'Source revision mismatch'
-
-# --- PHÂN CÔNG CÁ NHÂN ---
-MY_STUDENT_ID   = "23120345"      # MSSV của Quang
-MY_START_ID     = "2509.06047"    # Bài đầu tiên của Quang
-MY_END_ID       = "2509.11046"    # Bài cuối cùng của Quang
-MY_LOG_FILE     = DRIVE_ROOT / "m1-agent-23120345.log"
-MY_STATUS_FILE  = DRIVE_ROOT / "m1-launch-status-23120345.json"
-# -------------------------
-
-os.environ['IDS_SOURCE_SHA256'] = SOURCE_SHA256
-os.environ['IDS_STUDENT_ID']    = MY_STUDENT_ID
-
-for name in ('ARXIV_CONTACT_EMAIL', 'SEMANTIC_SCHOLAR_API_KEY'):
-    assert os.environ.get(name), 'Secret chưa được nạp: ' + name
-
-# Kiểm tra worker cũ còn sống không
-if MY_STATUS_FILE.exists():
-    prev = json.loads(MY_STATUS_FILE.read_text())
-    prev_pid = prev.get('pid')
-    if prev_pid:
-        cmd_file = Path('/proc') / str(prev_pid) / 'cmdline'
-        if cmd_file.exists() and b'colab_install_and_run.py' in cmd_file.read_bytes():
-            raise RuntimeError(
-                f'Worker cũ (PID {prev_pid}) đang chạy! '
-                'Không khởi động thêm. Chuyển sang cell Monitor để theo dõi.'
-            )
-
-log_handle = MY_LOG_FILE.open('a', buffering=1)
-worker = subprocess.Popen(
-    [
-        sys.executable,
-        str(CODE_ROOT / 'scripts/colab_install_and_run.py'),
-        '--root', str(DRIVE_ROOT),
-        '--student-id', MY_STUDENT_ID,
-        '--log-suffix', MY_STUDENT_ID,
-    ],
-    cwd=CODE_ROOT,
-    stdout=log_handle,
-    stderr=subprocess.STDOUT,
-    env=os.environ.copy()
-)
-print(f'✅ Worker QUANG đã khởi động!')
-print(f'   PID: {worker.pid}')
-print(f'   Dải: {MY_START_ID} → {MY_END_ID}')
-print(f'   Log: {MY_LOG_FILE}')
-```
-
----
-
-### 📌 CELL 5 — Monitor: Theo dõi tiến độ
-
-Chạy cell này bất cứ lúc nào để kiểm tra tiến độ (**không ảnh hưởng đến worker đang chạy**):
-
-#### Cho Thành:
-```python
-# CELL 5 — MONITOR (Thành 23120358)
-import json
-from pathlib import Path
-
-MY_STUDENT_ID = "23120358"
-MY_LOG_FILE   = DRIVE_ROOT / f"m1-agent-{MY_STUDENT_ID}.log"
-
-# Status files
-for fname in (
-    f'm1-launch-status-{MY_STUDENT_ID}.json',
-    'm1-final-v3/raw/crawl_summary.json',
-):
-    p = DRIVE_ROOT / fname
-    if p.exists():
-        val = json.loads(p.read_text())
-        val.pop('failed_ids', None)
-        print(f"[{fname}]\n  {json.dumps(val, ensure_ascii=False, indent=2)}\n")
-
-# Tail log
-if MY_LOG_FILE.exists():
-    log_text = MY_LOG_FILE.read_text(errors='replace')
-    lines = log_text.strip().splitlines()
-    print(f"\n📋 LOG (10 dòng cuối — tổng {len(lines)} dòng):")
-    for line in lines[-10:]:
-        print(f"  {line}")
-else:
-    print("⏳ Log chưa được tạo — worker chưa bắt đầu ghi log.")
-```
-
-#### Cho Quang:
-```python
-# CELL 5 — MONITOR (Quang 23120345)
-import json
-from pathlib import Path
-
-MY_STUDENT_ID = "23120345"
-MY_LOG_FILE   = DRIVE_ROOT / f"m1-agent-{MY_STUDENT_ID}.log"
-
-for fname in (
-    f'm1-launch-status-{MY_STUDENT_ID}.json',
-    'm1-final-v3/raw/crawl_summary.json',
-):
-    p = DRIVE_ROOT / fname
-    if p.exists():
-        val = json.loads(p.read_text())
-        val.pop('failed_ids', None)
-        print(f"[{fname}]\n  {json.dumps(val, ensure_ascii=False, indent=2)}\n")
-
-if MY_LOG_FILE.exists():
-    log_text = MY_LOG_FILE.read_text(errors='replace')
-    lines = log_text.strip().splitlines()
-    print(f"\n📋 LOG (10 dòng cuối — tổng {len(lines)} dòng):")
-    for line in lines[-10:]:
-        print(f"  {line}")
-else:
-    print("⏳ Log chưa được tạo — worker chưa bắt đầu ghi log.")
-```
-
----
-
-## ♻️ BƯỚC 3: KHI COLAB BỊ NGẮT KẾT NỐI (Resume)
-
-Colab CPU miễn phí tự ngắt sau **9–12 giờ**. Đây là điều bình thường. Toàn bộ bài đã cào không mất vì đã lưu trên Drive.
-
-**Trình tự resume khi mở lại:**
-
-1. Mở lại notebook.
-2. Chạy lại **CELL 1** (mount Drive, đọc Secrets).
-3. Chạy lại **CELL 2** (xác minh checksum — không cần giải nén lại nếu `/content/ids13-code-fb0283a65ea4` vẫn còn).
-4. Chạy lại **CELL 3** (cài package — Colab sẽ cài lại trong mỗi phiên mới vì `/content` bị reset).
-5. Chạy lại **CELL 4** — Worker sẽ tự động nhận ra checkpoint và **bỏ qua các bài đã cào thành công**, tiếp tục từ bài còn lại.
-
-> [!TIP]
-> **Mẹo:** Giữ tab Colab mở và "click" vào tab Colab thỉnh thoảng (mỗi vài giờ) để ngăn Colab tự dừng do timeout không tương tác. Hoặc có thể dùng tiện ích mở rộng trình duyệt giữ phiên Colab.
-
----
-
-## ✅ BƯỚC 4: KIỂM TRA SAU KHI HOÀN THÀNH
-
-Khi log báo tất cả bài đã được xử lý, chạy cell xác minh sau:
-
-```python
-# CELL 6 — Xác minh tính toàn vẹn dữ liệu sau khi cào xong
-import subprocess, sys
-
-MY_STUDENT_ID = "23120358"  # Hoặc "23120345" nếu là Quang
-
-result = subprocess.run(
-    [
-        sys.executable, "-m", "ids_arxiv", "validate",
-        "--stage", "raw",
-        "--path", str(DRIVE_ROOT / "m1-final-v3/raw"),
-    ],
-    cwd=CODE_ROOT,
-    capture_output=True, text=True
-)
-print(result.stdout[-5000:])
-if result.returncode != 0:
-    print("⚠️ Validation thất bại — xem log trên và báo Thông.")
-    print(result.stderr[-1000:])
-else:
-    print("✅ Toàn bộ dữ liệu hợp lệ!")
-```
-
-**Tiêu chuẩn đạt (phải thỏa TẤT CẢ):**
-- [x] Mọi thư mục bài trong dải của bạn đều báo `[OK] <id>: valid`.
-- [x] Không còn bất kỳ file `.png`, `.jpg`, `.pdf`, `.eps` nào trong thư mục `vN/`.
-- [x] File `metadata.json` và `references.json` đúng schema.
-- [x] File `crawl_status.json` có `"success": true` hoặc lỗi được ghi nhận rõ ràng.
-
----
-
-## 🚨 XỬ LÝ CÁC LỖI THƯỜNG GẶP
-
-| Lỗi | Nguyên nhân | Cách xử lý |
-|:---|:---|:---|
-| `AssertionError: Không thấy thư mục Drive` | Drive chưa được chia sẻ hoặc chưa được mount | Nhờ Thông chia sẻ Drive; chạy lại CELL 1 |
-| `CHECKSUM MISMATCH` | File bundle bị hỏng khi tải | Nhờ Thông upload lại file `.zip` và `.sha256` |
-| `Secret chưa được nạp` | Chưa thêm Secret hoặc chưa bật "Notebook access" | Vào Tools → Secrets, bật "Notebook access" cho cả 2 key |
-| `Tests THẤT BẠI` | Bundle code bị lỗi | Chụp toàn bộ output và nhờ Thông sửa bundle |
-| Worker báo `[FAIL]` liên tiếp cho nhiều bài | arXiv/S2 rate-limit — HTTP 429 | Bình thường! Worker tự backoff 60s và tiếp tục; không làm gì cả |
-| Colab ngắt giữa chừng | Timeout session 9–12 giờ | Resume bình thường theo BƯỚC 3 |
-| `RuntimeError: Worker cũ đang chạy` | Chạy lại CELL 4 khi worker cũ còn sống | Chuyển sang CELL 5 để theo dõi, không cần khởi động mới |
-
----
-
-## 📊 THÔNG SỐ KỸ THUẬT QUAN TRỌNG (ĐỂ THAM KHẢO)
-
-Những thông số này đã được cài vào source code và **bạn không cần thay đổi**:
-
-| Tham số | Giá trị | Lý do |
-|:---|:---:|:---|
-| Giãn cách tối thiểu giữa 2 request đến arXiv | **3 giây** | Quy định API Etiquette arXiv |
-| Giãn cách Semantic Scholar (có key) | **1.05 giây/req** | Rate limit S2 API: tối đa 1 req/s |
-| Giãn cách S2 (không có key) | **100 req / 5 phút** | Giới hạn ẩn danh — ĐÂY LÀ LÝ DO phải có key! |
-| Thời gian chờ khi gặp HTTP 429 | **≥ 60 giây** | Theo Retry-After header của arXiv/S2 |
-| Số lần thử lại tối đa mỗi request | **3 lần** | Sau đó đánh dấu `[FAIL]` và chuyển bài tiếp theo |
-| Số lượt recovery tự động sau Pass 0 | **3 lượt** | Tái cào tất cả `[FAIL]` trước khi kết thúc campaign |
-| Budget thời gian tối đa 1 phiên Colab | **9 giờ** | Colab CPU miễn phí timeout |
-| Nguồn tải mã LaTeX | `export.arxiv.org/src/` | Mirror chính thức — KHÔNG dùng `arxiv.org` trực tiếp |
-| Dữ liệu trích dẫn | `api.semanticscholar.org/graph/v1/paper/arXiv:{id}/references` | Chỉ lấy ref có `externalIds.ArXiv` |
-
----
-
-## 🗂️ CẤU TRÚC DỮ LIỆU ĐẦU RA SAU KHI CÀO XONG
-
-Mỗi bài báo trong dải của bạn sẽ có cấu trúc chuẩn sau trong Drive:
+# M1: ba Colab độc lập, dùng chung source và Drive
+
+Phiên bản mới: protocol 4. Không có server/coordinator xuyên Colab, không cần URL
+dịch vụ. Coordinator trong mỗi runtime vẫn quản lý process, checkpoint và retry.
+Notebook chung: `notebooks/IDS13_M1_Colab.ipynb`.
+
+## Cập nhật giao diện Run all (13/11, phiên tối)
+
+Notebook hiện có **3 code cell**: (1) chọn MSSV + setup/source/dependencies,
+(2) tự test/preflight/khởi chạy, (3) bảng tiến độ và độ trễ. Chỉ chọn MSSV rồi
+Run all; lần đầu vẫn phải chấp thuận quyền Google Secrets/Drive. Không có cờ
+START_PILOT/START_FULL cần bật thủ công. Script `ids_arxiv.colab_app` tự probe
+5 ID đầu, đạt thì mở đủ 5.000 ID. Chưa đạt thì giữ probe/retry, không giả báo đạt.
+
+Output Run all ổn định tại `m1-team-v4/<runner>/main/full/<owner>/`; không tạo
+corpus pilot riêng và không sinh thêm thư mục cho mỗi lần resume. Điều kiện bắt
+buộc vẫn là một runtime/runner. Hai runner giúp cùng owner vẫn có namespace riêng.
+Các mục hướng dẫn pilot/full từng cell và namespace runtime ở dưới mô tả giao
+diện cũ/CLI nâng cao, không phải thao tác bắt buộc của notebook mới.
+
+Ledger probe/full tách biệt (hậu tố `-probe` cho checkpoint/summary probe), dù
+cùng corpus raw. Điều này ngăn resume từ full 5.000 rows làm probe đọc nhầm
+toàn dải hoặc ghi đè checkpoint full. Các ledger/log này phục vụ khôi phục,
+không phải corpus pilot trùng lặp.
+
+Monitor đọc local, không quét toàn Drive. Có mean/p50/p95 mỗi lượt xử lý và các
+khâu cache/import, metadata batch dùng chung, worker, ghi Drive, checkpoint; phần
+worker tách metadata/source/S2/ngày reference/validation. `worker/*` là phân rã
+của `paper_worker`, không cộng hai lần. Cache/retry được tách khỏi lượt có công
+việc. Tốc độ tăng ròng bài đã đạt khác tốc độ số lượt thử; không suy ETA từ mẫu
+nhỏ hoặc lấy warm resume làm cold benchmark. Chi phí queue idle/startup còn nằm
+trong tổng runtime benchmark dù không thuộc độ trễ một lượt paper.
+
+File tạm nằm trên SSD local và được đóng/dọn sau sử dụng. Backup của chính
+transaction commit được dọn sau marker readback thành công; nếu commit lỗi giữ
+bản khôi phục cần thiết. Không tự quét/xóa corpus hay backup lịch sử do người
+khác tạo. Checkpoint, raw data, source release và log benchmark là dữ liệu bền
+vững cần giữ, không phải file tạm.
+
+## 1. Chuẩn bị một lần
+
+Thông chia sẻ thư mục Drive cho Thành/Quang với quyền Editor. Mỗi người thêm
+shortcut thư mục đó vào My Drive. Nếu tên/path khác, điền `DRIVE_ROOT_OVERRIDE`.
+Mỗi người lưu **key S2 riêng** và email liên hệ của mình trong Colab Secrets:
+`SEMANTIC_SCHOLAR_API_KEY`, `ARXIV_CONTACT_EMAIL`; bật Notebook access.
+Không chép key vào source, output, chat hoặc GitHub.
+
+Mỗi người dùng một bản copy của cùng notebook, runtime **CPU**, cùng SHA release.
+Một MSSV người vận hành chỉ có một runtime hoạt động. Không dùng tiện ích giả
+lập hoạt động hoặc hứa giữ Colab sống vô hạn.
+
+## 2. Cấu hình
+
+| Người chạy | `RUNNER_ID` | `TARGET_OWNER_IDS` mặc định |
+|---|---|---|
+| Thông | `23120364` | để `[]`: dải Thông |
+| Thành | `23120358` | để `[]`: dải Thành |
+| Quang | `23120345` | để `[]`: dải Quang |
+
+Muốn Thành cào giúp Thông và Quang: giữ `RUNNER_ID="23120358"`, đặt
+`TARGET_OWNER_IDS=["23120364", "23120345"]`. Không đổi danh tính người chạy thành
+Thông/Quang. Chủ dữ liệu luôn lấy từ manifest, không lấy từ tài khoản vận hành.
+
+## 3. Độc lập nhưng vẫn tuân thủ giới hạn mạng
+
+`NETWORK_MODE="independent_utc"` là mặc định. Request arXiv/OAI/source luân phiên
+theo UTC: phút 00–10/30–40 cho Thông; 10–20/40–50 cho Thành; 20–30/50–60 cho Quang.
+Mỗi biên có đệm 10 giây. Máy Colab phải có đồng hồ UTC đúng. Kết nối chạy trong
+process có watchdog và được đóng trước cuối lượt; giới hạn 3 giây vẫn áp dụng.
+Việc này dựa vào lịch và danh tính cố định, không cần các Colab liên lạc với nhau.
+
+S2 dùng key cá nhân, limiter/backoff riêng. Xử lý local, cache, kiểm tra và upload
+không phải chờ lượt arXiv. Ba runtime độc lập **không có nghĩa** được vượt quota
+toàn nhóm hoặc bảo đảm không bao giờ gặp 429/timeout.
+
+`NETWORK_MODE="exclusive"` chỉ dùng khi đã xác nhận các crawler khác dừng. Chế
+độ này không chờ lượt người khác. Benchmark cuối của cả nhóm nên dùng chế độ
+này trên Colab CPU, chọn đủ ba owner; dữ liệu nhiều phiên phải giữ log riêng.
+Không lấy tốc độ cache/resume hoặc cộng thời gian chạy song song làm cold benchmark.
+
+## 4. Thứ tự chạy
+
+1. Config: chọn runner, target, xác nhận một runtime/runner và key riêng.
+2. Setup: CPU, đọc Secrets, mount Drive.
+3. Source: xác minh SHA và giải nén release bất biến.
+4. Dependencies + Offline tests: dừng nếu test không đạt.
+5. Preflight: xác minh manifest, đúng 5.000 ID/owner và môi trường.
+6. Pilot: bật `START_PILOT=True` một lần; Monitor đến khi kết thúc và đạt.
+7. Full: bật `START_FULL=True` một lần; theo dõi Monitor. Pilot không tự mở full.
+8. Audit: sau khi worker full dừng, chạy audit đủ 5.000 ID mỗi owner, đọc Report.
+
+Các nút launch tự trả về False; bấm lại không tạo worker thứ hai. Muốn dừng,
+copy chính xác `run_id` từ Monitor vào ô Stop. Không dùng Stop/Interrupt kernel
+để thay cho dừng worker có kiểm soát. Agent cũng dùng đúng các cell này.
+
+## 5. Output và resume
 
 ```text
-IDS_Nhom13_Corpus_Backup/
-└── m1-final-v3/
-    └── raw/
-        └── 2509-01047/           ← Thành (tên thư mục: yymm-id)
-            ├── v1/
-            │   ├── main.tex
-            │   ├── sections.tex
-            │   └── references.bib
-            ├── v2/               ← Nếu bài có phiên bản 2
-            │   └── main.tex
-            ├── metadata.json     ← Tiêu đề, tác giả, ngày submit
-            ├── references.json   ← Danh sách trích dẫn từ Semantic Scholar
-            └── crawl_status.json ← Trạng thái cào, checksum, kích thước
+Drive/
+  m1-final-v3/                         # baseline cũ: chỉ đọc
+  m1-team-v4/
+    <runner>/<runtime>/<run_label>/
+      pilot/<owner>/...
+      full/<owner>/raw/<paper>/...
+      full/<owner>/audit-result.json
+    catalog/*.json
 ```
 
-> [!NOTE]
-> File `metadata.json` và `references.json` phải có đủ **tất cả các phiên bản** của bài báo. File ảnh (`.png`, `.jpg`, `.pdf`, `.eps`) đã được tự động xóa sau khi giải nén — chỉ giữ lại file văn bản `.tex`, `.bib` và tương đương.
+Dải khác nhau vốn không ghi cùng paper; namespace runner/runtime còn bảo vệ cả
+trường hợp hai người cùng chọn một owner để hỗ trợ. Bản full của runtime cũ được
+tìm qua catalog và nhập như cache chỉ đọc. Cache protocol 3 giữ lại source có hash
+hợp lệ nhưng phải bổ sung snapshot S2 đầy đủ và metadata từng version. Chỉ copy
+`.tex`/`.bib` nguyên byte; không đổi nội dung figure, không xóa corpus baseline.
 
----
+Khi VM mới: chạy lại Setup → Source → Tests → Preflight → Pilot → Full với cùng
+runner/target/run_label. Namespace runtime mới không đè runtime cũ; cache được
+kiểm tra và copy, không coi cờ success cũ là bằng chứng đầy đủ. Có thể bổ sung
+`CACHE_DIRS` nếu nguồn cache nằm ngoài catalog. Copy/kiểm hash Drive vẫn tốn thời
+gian và được tính vào runtime; không được quảng cáo là resume miễn phí.
 
-## 📞 KHI CẦN HỖ TRỢ
+Không restart khi đang có staging chưa upload hoặc lỗi mirror. Nếu Google thu
+hồi VM đột ngột, phần chưa mirror có thể mất; phần đã commit trên Drive giữ được.
 
-1. **Thành viên trước tiên:** Chụp ảnh màn hình toàn bộ output lỗi + log 20 dòng cuối từ CELL 5.
-2. **Gửi cho Thông qua nhóm chat** kèm: MSSV của bạn, tên cell bị lỗi, và thông báo lỗi chính xác.
-3. **Thông sẽ:**
-   - Vá code trong repo nếu cần thiết.
-   - Build bundle mới và thay thế file trong Drive.
-   - Thông báo SHA-256 mới để bạn cập nhật `SOURCE_SHA256` trong CELL 2.
+## 6. Điều kiện hoàn tất và giới hạn hiện tại
 
----
+Worker thoát hoặc thử đủ 5.000 ID chưa đồng nghĩa hoàn tất. Chỉ audit exact
+manifest, hash/inventory, metadata từng version, toàn bộ snapshot S2 và ngày thật
+mới cho phép chốt. Ngoại lệ nguồn bị rút phải có bằng chứng và không tính thành
+tải thành công; 429/timeout còn là pending. Bản ghi S2 toàn publication không
+được mô tả sai thành dữ liệu lịch sử riêng của từng revision.
 
-## ⚠️ NHỮNG ĐIỀU TUYỆT ĐỐI KHÔNG LÀM
+Giữ toàn bộ references trong `references_all.json`; `references.json` là view
+arXiv để làm M3. Không trộn các snapshot đang dở. M2/M3 và publisher vẫn là công
+việc tiếp theo: notebook này **không** tuyên bố đã hoàn thiện parser/model hay
+đã xuất bản dataset. Bộ nộp cuối có sáu bảng; xem `SPEC_AUDIT_2026-11-13.md`.
 
-- ❌ **Không** chạy 2 worker trên cùng 1 Colab / cùng 1 tài khoản Google.
-- ❌ **Không** thay đổi giá trị `SOURCE_SHA256` trừ khi Thông yêu cầu (và cung cấp giá trị mới).
-- ❌ **Không** xóa hoặc di chuyển thư mục `m1-final-v3/` trên Drive.
-- ❌ **Không** cào từ domain `arxiv.org` trực tiếp (phải dùng `export.arxiv.org`).
-- ❌ **Không** dùng GPU runtime.
-- ❌ **Không** chia sẻ hay in ra giá trị của 2 Secrets (`ARXIV_CONTACT_EMAIL`, `SEMANTIC_SCHOLAR_API_KEY`) trong Colab.
-- ❌ **Không** commit dữ liệu raw (thư mục `data/`) lên GitHub.
+Hướng dẫn song song trước phiên bản này đã được lưu tại
+`artifacts/notebook-backups-20261113/` trên workspace, không phải code để chạy tiếp.

@@ -119,6 +119,11 @@ class FakeCrawler:
             "authors": [],
             "submission_date": "2025-09-01T00:00:00Z",
             "revised_dates": ["2025-09-01T00:00:00Z"],
+            "metadata_quality_version": 3,
+            "version_metadata_complete": True, "version_metadata": {"1": {"title": "Test"}, "2": {"title": "Test"}},
+            "metadata_dates_complete": True,
+            "version_dates": {"1": "2025-09-01T00:00:00Z", "2": "2025-09-02T00:00:00Z"},
+            "version_date_sources": {"1": "arxiv_atom_published", "2": "arxiv_atom_updated"},
         }, [1, 2]
 
     def download_and_extract_version(self, paper, version, directory):
@@ -131,12 +136,14 @@ class FakeCrawler:
             "version": version,
             "success": True,
             "state": "downloaded",
+            "source_policy": "original_tex_bib_only_v1",
             "files": file_inventory(directory),
         }
 
 
 class FakeS2:
-    last_status = {"success": True, "state": "empty"}
+    last_status = {"success": True, "state": "empty", "all_references_retained": True, "raw_count": 0}
+    last_all_references = []
 
     def get_paper_references(self, paper):
         return {}

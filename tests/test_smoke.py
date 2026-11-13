@@ -106,9 +106,9 @@ def test_parquet_export_end_to_end_validation(tmp_path):
             "element_id": ["2509-01047-sent-1"],
             "parent_id": ["2509-01047-sec-1"],
         },
-        schema=TABLE_SCHEMAS["element_parents"],
+        schema=TABLE_SCHEMAS["hierarchy"],
     )
-    pq.write_table(t_parents, export_dir / "element_parents.parquet")
+    pq.write_table(t_parents, export_dir / "hierarchy.parquet")
 
     # 4. bibtex_entries
     t_bib = pa.Table.from_pydict(
@@ -123,9 +123,9 @@ def test_parquet_export_end_to_end_validation(tmp_path):
             "journal": ["NeurIPS"],
             "url": ["https://arxiv.org/abs/1706.03762"],
         },
-        schema=TABLE_SCHEMAS["bibtex_entries"],
+        schema=TABLE_SCHEMAS["bibtex"],
     )
-    pq.write_table(t_bib, export_dir / "bibtex_entries.parquet")
+    pq.write_table(t_bib, export_dir / "bibtex.parquet")
 
     # 5. paper_references
     t_refs = pa.Table.from_pydict(
@@ -137,9 +137,9 @@ def test_parquet_export_end_to_end_validation(tmp_path):
             "ref_submission_date": ["2017-06-12T17:52:00Z"],
             "ref_s2_id": ["204e3073870fae3d05bcbc2f6a8e263d9b72e776"],
         },
-        schema=TABLE_SCHEMAS["paper_references"],
+        schema=TABLE_SCHEMAS["references"],
     )
-    pq.write_table(t_refs, export_dir / "paper_references.parquet")
+    pq.write_table(t_refs, export_dir / "references.parquet")
 
     # 6. predictions
     t_preds = pa.Table.from_pydict(
@@ -158,18 +158,6 @@ def test_parquet_export_end_to_end_validation(tmp_path):
     )
     pq.write_table(t_preds, export_dir / "predictions.parquet")
 
-    # 7. sources
-    t_src = pa.Table.from_pydict(
-        {
-            "arxiv_id": ["2509.01047"],
-            "version": [1],
-            "filename": ["main.tex"],
-            "content": ["\\documentclass{article}"],
-        },
-        schema=TABLE_SCHEMAS["sources"],
-    )
-    pq.write_table(t_src, export_dir / "sources.parquet")
-
     # Run complete validator
     res = validate_parquet_tables(
         export_dir=export_dir,
@@ -177,6 +165,6 @@ def test_parquet_export_end_to_end_validation(tmp_path):
         members_config=Path("configs/members.csv"),
     )
     assert res["valid"], f"Parquet export validation failed: {res}"
-    assert len(res["table_checks"]) == 7
+    assert len(res["table_checks"]) == 6
     for t_name, check in res["table_checks"].items():
         assert check["valid"], f"Table {t_name} failed: {check.get('errors')}"

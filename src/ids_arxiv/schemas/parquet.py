@@ -1,5 +1,5 @@
 """
-PyArrow and Pydantic Schemas for 7 Hugging Face Parquet Tables (Milestone 3 & Final Submission)
+PyArrow and Pydantic schemas for the six published course dataset tables.
 """
 
 from typing import List, Optional
@@ -144,9 +144,8 @@ SOURCES_ARROW_SCHEMA = pa.schema([
 TABLE_SCHEMAS = {
     "papers": PAPERS_ARROW_SCHEMA,
     "elements": ELEMENTS_ARROW_SCHEMA,
-    "element_parents": ELEMENT_PARENTS_ARROW_SCHEMA,
-    "bibtex_entries": BIBTEX_ENTRIES_ARROW_SCHEMA,
-    "paper_references": PAPER_REFERENCES_ARROW_SCHEMA,
+    "hierarchy": ELEMENT_PARENTS_ARROW_SCHEMA,
+    "bibtex": BIBTEX_ENTRIES_ARROW_SCHEMA,
+    "references": PAPER_REFERENCES_ARROW_SCHEMA,
     "predictions": PREDICTIONS_ARROW_SCHEMA,
-    "sources": SOURCES_ARROW_SCHEMA,
 }

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from ids_arxiv.benchmark import BenchmarkSession, summarize_sessions
+from ids_arxiv.checkpoint import PROTOCOL, read_json, verified_record
 from ids_arxiv.crawler.runner import run_crawling_pipeline
 from ids_arxiv.discovery import discover_publications, load_members
 from ids_arxiv.storage import atomic_json, sha256_file, utc_now
@@ -20,6 +21,7 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--max-hours", type=float, default=10)
     parser.add_argument("--campaign", default="m1-final-v3")
+    parser.add_argument("--coordinated-network", action="store_true")
     parser.add_argument(
         "--student-id",
         default=None,
@@ -27,6 +29,10 @@ def main():
              "Used in parallel-worker mode where each member runs their own Colab.",
     )
     args = parser.parse_args()
+    if args.stage in {"pilot", "full"} and PROTOCOL >= 4:
+        raise SystemExit("Use ids_arxiv.team_run for protocol-4 pilot/full; the v3 campaign remains a read-only baseline.")
+    if args.stage in {"discover", "pilot", "full"} and not args.coordinated_network:
+        raise SystemExit("Coordinate quota across all Colabs; then pass --coordinated-network explicitly.")
     if not (Path("/content").is_dir() and os.getenv("COLAB_RELEASE_TAG")):
         raise SystemExit(
             "This entrypoint is for Google Colab; local runs are not final benchmarks."
@@ -79,8 +85,9 @@ def main():
         output = root / "raw" if args.stage == "full" else args.root / "m1-pilot-v3/raw"
         if args.stage == "full":
             gate_path = args.root / "m1-pilot-v3" / "pilot_gate.json"
-            if not gate_path.exists() or not json.loads(gate_path.read_text())["passed"]:
-                raise SystemExit("Full benchmark requires a validated 30-publication pilot")
+            gate = read_json(gate_path, {})
+            if not gate.get("passed") or gate.get("summary", {}).get("protocol_version") != 3:
+                raise SystemExit("Full benchmark requires a validated protocol-3 30-publication pilot")
         result = run_crawling_pipeline(
             manifest,
             output,
@@ -104,6 +111,8 @@ def main():
         import pandas as pd
 
         frame = pd.read_parquet(manifest)
+        if args.student_id:
+            frame = frame[frame.owner_student_id.astype(str) == args.student_id]
         failures = []
         for paper in frame.dir_id:
             directory = root / "raw" / paper
@@ -111,10 +120,15 @@ def main():
                 failures.append({"paper": paper, "errors": ["Missing publication record"]})
                 continue
             result = validate_raw_paper(directory)
+            record = read_json(directory / "crawl_status.json", {})
+            if not record.get("success") or not verified_record(directory, record):
+                result["valid"] = False
+                result.setdefault("errors", []).append("Missing verified protocol-3 commit, dates or hashes")
             if not result["valid"]:
                 failures.append(result)
         result = {"expected": len(frame), "failed_validation": len(failures), "failures": failures}
-        atomic_json(root / "validation.json", result)
+        suffix = f"-{args.student_id}" if args.student_id else ""
+        atomic_json(root / f"validation{suffix}.json", result)
         print(json.dumps({k: v for k, v in result.items() if k != "failures"}, indent=2))
         if failures:
             raise SystemExit(1)

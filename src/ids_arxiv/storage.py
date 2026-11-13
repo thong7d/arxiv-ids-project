@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,12 +15,19 @@ def utc_now() -> str:
 
 def atomic_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(value, handle, ensure_ascii=False, indent=2, allow_nan=False)
-        handle.flush()
-        os.fsync(handle.fileno())
-    temporary.replace(path)
+    # A failed replace must NEVER remove the last good checkpoint. Separate
+    # names also prevent two writers from corrupting each other's temporary file.
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(value, handle, ensure_ascii=False, indent=2, allow_nan=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+    finally:
+        # The old checkpoint is never unlinked; only this operation's scratch
+        # file is discarded after success OR a normal write/replace exception.
+        temporary.unlink(missing_ok=True)
 
 
 def sha256_file(path: Path) -> str:
@@ -43,6 +51,14 @@ def file_inventory(directory: Path) -> dict:
 
 def verify_inventory(directory: Path, inventory: dict) -> bool:
     if not directory.is_dir() or not inventory:
+        return False
+    actual = set()
+    for item in directory.rglob("*"):
+        if item.is_symlink():
+            return False
+        if item.is_file():
+            actual.add(item.relative_to(directory).as_posix())
+    if actual != set(inventory):
         return False
     for name, expected in inventory.items():
         path = (directory / name).resolve()

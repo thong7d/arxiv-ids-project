@@ -15,10 +15,10 @@ from ids_arxiv.crawler.s2_client import SemanticScholarClient
 
 def test_rate_limiter():
     limiter = PoliteRateLimiter(min_interval_seconds=0.1)
-    t0 = time.time()
+    t0 = time.monotonic()
     limiter.wait()
     limiter.wait()
-    elapsed = time.time() - t0
+    elapsed = time.monotonic() - t0
     assert elapsed >= 0.09, f"Rate limiter did not enforce delay: {elapsed}s"
 
 
@@ -130,3 +130,11 @@ def test_run_crawling_pipeline_student_filter(tmp_path):
         student_id="99999999",  # Non-existent
     )
     assert summary["total_attempted"] == 0
+
+
+def test_paper_timeout():
+    from ids_arxiv.crawler.runner import paper_timeout
+
+    # Ensure paper_timeout context manager operates without crashing
+    with paper_timeout(5):
+        pass

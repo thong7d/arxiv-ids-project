@@ -54,6 +54,12 @@ cp .env.example .env
 
 Hướng dẫn hiện hành: [COLAB_RUNBOOK.md](docs/COLAB_RUNBOOK.md). Notebook: [IDS13_M1_Colab.ipynb](notebooks/IDS13_M1_Colab.ipynb).
 
+**Cập nhật 13/11:** xem [phục hồi M1 v3](docs/M1_RECOVERY_V3.md) trước khi chạy.
+Phạm vi hiện hành là **riêng 5.000 ID của 23120364 trước**, chưa chạy hai MSSV
+còn lại; xem [trạng thái vận hành](docs/M1_RELEASE_2026-11-13.md).
+Không khởi chạy thêm khi Thành/Quang còn cào; cần điều phối quota giữa các Colab.
+Launcher mới tách session, monitor local và checkpoint/commit có kiểm tra hash.
+
 Discovery cũ sinh thiếu dải qua tháng, nên manifest cũ không dùng cho full benchmark. Lệnh `discover` hiện truy vấn metadata thật, lưu bằng chứng và checksum. Checkpoint schema cũ được kiểm tra lại thay vì tin cờ `success`.
 
 Benchmark chính thức chạy toàn bộ nhóm trên Colab CPU, tính delay/retry, có thể chia nhiều phiên và tổng hợp log. `benchmark --stage crawl` chạy thực, không còn placeholder. Các lệnh `parse`, `label`, `train`, `export` vẫn là placeholder và chưa được xem là đã triển khai.
@@ -99,3 +105,11 @@ Toàn bộ tài liệu phân tích kỹ thuật và logic thuật toán được
 - **[MILESTONE_2_PARSING.md](file:///d:/000MINHTHONG/Final-year%20Semeter%20I/IDS/Prj/docs/MILESTONE_2_PARSING.md)**: Giải thuật phân tích cú pháp đa file, hierarchy tree và 2 cấp độ khử trùng lặp.
 - **[MILESTONE_3_MATCHING_AND_SUBMISSION.md](file:///d:/000MINHTHONG/Final-year%20Semeter%20I/IDS/Prj/docs/MILESTONE_3_MATCHING_AND_SUBMISSION.md)**: Pipeline ML ghép nối trích dẫn, schema 7 bảng Parquet và Poster.
 - **[PLAN.md](file:///d:/000MINHTHONG/Final-year%20Semeter%20I/IDS/Prj/PLAN.md)**: Kế hoạch triển khai chi tiết 8 Phase của Nhóm 13.
+# Cập nhật yêu cầu và notebook độc lập (13/11/2026)
+
+Hướng dẫn vận hành mới: [ba Colab độc lập](docs/HUONG_DAN_CAO_SONG_SONG.md).
+Đối chiếu đề hiện tại và phần còn thiếu: [SPEC_AUDIT](docs/SPEC_AUDIT_2026-11-13.md).
+Notebook dùng chung: [IDS13_M1_Colab.ipynb](notebooks/IDS13_M1_Colab.ipynb).
+Protocol 4 không ghi đè corpus v3; bảng cuối là 6 bảng, không phải 7 bảng như
+một số ghi chú lịch sử phía dưới. M2/M3 chưa được triển khai hoàn chỉnh.
+

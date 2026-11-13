@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Optional
 
+from .shared_quota import SharedQuota
+
 
 def retry_after_seconds(value: Optional[str]) -> float:
     if not value:
@@ -66,5 +68,5 @@ class PoliteRateLimiter:
 
 
 # Global singletons for centralized rate limiting across pipeline
-arxiv_limiter = PoliteRateLimiter(min_interval_seconds=3.0)
+arxiv_limiter = SharedQuota(3.0, "arxiv")
 s2_limiter = PoliteRateLimiter(1.05, max_requests=100)

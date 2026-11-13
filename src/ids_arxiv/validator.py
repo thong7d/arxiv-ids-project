@@ -66,9 +66,9 @@ def validate_raw_paper(paper_dir: Path) -> Dict[str, Any]:
 
     for vdir in version_dirs:
         for f in vdir.rglob("*"):
-            if f.is_file() and f.suffix.lower() in FORBIDDEN_IMAGE_EXTENSIONS:
+            if f.is_file() and f.suffix.lower() not in {".tex", ".bib"}:
                 results["errors"].append(
-                    f"Forbidden image/binary file found in {vdir.name}: {f.name}"
+                    f"Non-TeX/BibTeX file found in {vdir.name}: {f.name}"
                 )
 
     if results["errors"]:
@@ -137,15 +137,7 @@ def validate_parquet_tables(
     """
     results: Dict[str, Any] = {"export_dir": str(export_dir), "valid": True, "table_checks": {}}
 
-    target_tables = [
-        "papers",
-        "elements",
-        "element_parents",
-        "bibtex_entries",
-        "paper_references",
-        "predictions",
-        "sources",
-    ]
+    target_tables = list(TABLE_SCHEMAS)
 
     for table_name in target_tables:
         table_path = export_dir / table_name

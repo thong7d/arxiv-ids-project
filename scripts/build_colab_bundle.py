@@ -23,7 +23,7 @@ def main():
         ".ipynb",
     }
     candidates = []
-    for name in ("src", "tests", "configs", "scripts", "book"):
+    for name in ("src", "tests", "configs", "scripts", "book", "docs"):
         directory = root / name
         if directory.exists():
             candidates.extend(
@@ -32,7 +32,7 @@ def main():
                 if p.is_file() and p.suffix in allowed and "__pycache__" not in p.parts
             )
     candidates += [
-        root / name for name in ("pyproject.toml", "requirements.txt", "README.md", "PLAN.md")
+        root / name for name in ("pyproject.toml", "requirements.txt", "requirements-colab-m1.txt", "README.md", "PLAN.md")
     ]
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(set(candidates)):

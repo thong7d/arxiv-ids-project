@@ -1,5 +1,7 @@
 # Kế hoạch triển khai đồ án IDS – Nhóm 13
 
+> Đối chiếu đề trực tuyến ngày 13/11/2026: xem [SPEC_AUDIT](docs/SPEC_AUDIT_2026-11-13.md) và [hướng dẫn notebook độc lập](docs/HUONG_DAN_CAO_SONG_SONG.md). Những mốc tiến độ cũ phía dưới là lịch kế hoạch, không phải xác nhận đã làm xong. M1 protocol 4 bổ sung all-reference snapshots và metadata từng version; M2/M3 vẫn cần triển khai/kiểm chứng thực tế.
+
 > Cập nhật 01/11/2026 theo giải đáp mới của giảng viên: benchmark cuối chạy **toàn bộ dữ liệu của nhóm trên Google Colab CPU**, gồm delay/retry. Được chia nhiều phiên với checkpoint và log từng phiên. Sample chỉ dùng pilot. Được crawl nhiều lượt; báo kết quả lượt đầu và sau phục hồi. Số bài thực tế lấy từ manifest discovery đã xác minh, không mặc định 15.000.
 >
 > Lịch điều chỉnh: 01–02/11 sửa crawler/benchmark và kết nối Colab; 02–10/11 full crawl qua nhiều phiên; 02–11/11 M2 theo shard đã validate; 08–12/11 labels; 13–16/11 model; các deadline nộp bên dưới giữ nguyên. Nộp URL Book ngày 06/11 với số liệu tạm được ghi nhãn rõ ràng, cập nhật kết quả đầy đủ trước hạn Poster.
@@ -8,7 +10,7 @@
 
 Mục tiêu là xây dựng một pipeline tái lập hoàn chỉnh:
 
-**arXiv ID → crawl toàn bộ phiên bản → phân tích LaTeX phân cấp → chuẩn hóa/khử trùng lặp → ghép nối trích dẫn bằng ML → xuất 7 bảng Parquet → Jupyter Book + Poster.**
+**arXiv ID → crawl toàn bộ phiên bản → phân tích LaTeX phân cấp → chuẩn hóa/khử trùng lặp → ghép nối trích dẫn bằng ML → xuất 6 bảng Parquet → Jupyter Book + Poster.**
 
 ### Phạm vi dữ liệu
 
@@ -109,10 +111,10 @@ Luồng dữ liệu:
 ```text
 members.csv
   → paper manifest
-  → raw/{paper}/v1...vN + metadata.json + references.json
+  → raw/{paper}/v1...vN + metadata.json + references_all.json + references.json
   → processed/{paper}/hierarchy.json + refs.bib
   → labels/features/models/predictions
-  → exports/{student_id}/7 bảng Parquet
+  → exports/{student_id}/6 bảng Parquet
 ```
 
 Các bảng Hugging Face giữ đúng schema đề bài:
@@ -121,13 +123,12 @@ Các bảng Hugging Face giữ đúng schema đề bài:
 |---|---|
 | `papers` | `arxiv_id` |
 | `elements` | `element_id`, liên kết đến `papers` |
-| `element_parents` | `arxiv_id + version + element_id + parent_id` |
-| `bibtex_entries` | `arxiv_id + citation_key` |
-| `paper_references` | `arxiv_id + ref_arxiv_id` |
+| `hierarchy` | `arxiv_id + version + element_id + parent_id` |
+| `bibtex` | `arxiv_id + citation_key` |
+| `references` | `arxiv_id + ref_arxiv_id` |
 | `predictions` | `arxiv_id + citation_key`, chỉ chứa publications tham gia M3 |
-| `sources` | `arxiv_id + version + filename` |
 
-Các artifact nội bộ như crawl status, labels, features, benchmark và error logs không đưa vào bảy bảng chính.
+Các artifact nội bộ như raw source, crawl status, labels, features, benchmark và error logs không đưa vào sáu bảng chính.
 
 ---
 
@@ -188,16 +189,16 @@ Các artifact nội bộ như crawl status, labels, features, benchmark và erro
   - không bỏ sót ID hợp lệ trong khoảng;
   - mỗi ID chỉ có một owner;
   - ghi rõ ID không tồn tại/withdrawn thay vì im lặng bỏ qua.
-- Định nghĩa Pydantic/JSON schema cho metadata, references, hierarchy, label và bảy bảng Parquet.
+- Định nghĩa Pydantic/JSON schema cho metadata, references, hierarchy, label và sáu bảng Parquet.
 - Tạo fixture tổng hợp gồm:
   - bài một và nhiều version;
   - LaTeX nhiều file;
   - `\input`, `\include`, include cycle;
   - figure, table, equation, itemize;
   - acknowledgements, appendix, references;
-  - `.bib`, `.bbl`, `\bibitem`;
+  - `.bib`, `\bibitem` trong `.tex`; file `.bbl` chỉ làm negative fixture cho bộ lọc source;
   - câu lặp giữa các version.
-- Xây end-to-end smoke test: fixture → parse → matching nhỏ → bảy bảng.
+- Xây end-to-end smoke test: fixture → parse → matching nhỏ → sáu bảng. Fixture/validator không đồng nghĩa parser/model đã hoàn thành.
 
 **Đầu ra**
 
@@ -249,13 +250,14 @@ Các artifact nội bộ như crawl status, labels, features, benchmark và erro
    - Download vào `.part`, checksum, rồi mới giải nén.
    - Chống tar path traversal, symlink ra ngoài thư mục và archive bomb.
    - Nhận diện tar.gz, tar, gzip đơn, plain TeX và PDF-only.
-   - Đo dung lượng trước khi lọc; xóa ảnh/binary nhưng giữ nguyên LaTeX figure/table.
+   - Đo tổng bytes archive trước lọc; chỉ extract `.tex`/`.bib`, không sửa một byte LaTeX figure/table.
    - Xóa archive sau khi đã trích text thành công để hạn chế peak disk.
 
 4. **Semantic Scholar**
-   - Một centralized rate limiter; không dùng nhiều API key để lách rate limit.
+   - Limiter đúng phạm vi key/người; key cá nhân không chia sẻ và không xoay key/IP để né quota.
    - Thu thập paper ID, external arXiv ID, title, authors, year/date và venue.
    - Chỉ đưa reference có arXiv ID vào `references.json`.
+   - Giữ toàn bộ snapshot S2 trong `references_all.json`, kể cả reference không có arXiv ID; không giả snapshot publication thành lịch sử S2 theo revision.
    - Batch-enrich submission date của reference bằng arXiv API và cache theo arXiv ID.
    - Với 404, 429, 5xx hoặc chưa được index: ghi trạng thái và nguyên nhân.
 
@@ -271,6 +273,7 @@ raw/<paper-id>/
 ├── v1/
 ├── v2/
 ├── metadata.json
+├── references_all.json
 ├── references.json
 └── crawl_status.json
 ```
@@ -334,7 +337,7 @@ Các trường hợp không có TeX vẫn có metadata, status và thư mục ve
    - Chuẩn hóa khoảng trắng theo quy tắc xác định, không làm thay đổi nội dung toán.
 
 5. **Reference extraction**
-   - Đọc `.bib` trước, sau đó `.bbl` và `\bibitem`.
+   - Đọc `.bib` và các `\bibitem` trong `.tex`; không phụ thuộc vào `.bbl` vốn không được giữ trong corpus M1 theo đề hiện tại.
    - Tách `\bibitem` theo boundary, rồi dùng heuristic lấy author/title/year/venue/DOI.
    - Không bịa trường không trích xuất được; lưu nullable và error note nội bộ.
 
@@ -354,7 +357,7 @@ Các trường hợp không có TeX vẫn có metadata, status và thư mục ve
 
 - Một `hierarchy.json` và `refs.bib` cho mỗi publication.
 - Parse status, unresolved citation report, duplicate merge report và metrics.
-- Raw source vẫn được giữ để tạo bảng `sources`.
+- Raw `.tex`/`.bib` nguyên bản được giữ nội bộ cho M2 và audit; không có bảng `sources` trong dataset nộp.
 
 **Kết quả mong đợi**
 
@@ -441,7 +444,7 @@ Các trường hợp không có TeX vẫn có metadata, status và thư mục ve
 Mỗi thành viên:
 
 - Chọn sáu publication dự phòng, chính thức giữ ít nhất năm publication.
-- Đảm bảo năm publication chính thức có tổng cộng ít nhất 20 positive associations.
+- Mỗi thành viên có ít nhất 5 publication manual; mỗi publication có ≥20 BibTeX entry được gán nhãn, tổng ≥100 entry/thành viên. Nhóm ba người có ≥15 publication/300 entry; không thay yêu cầu này bằng 20 positive pairs.
 - Gán một ground-truth arXiv ID hoặc `null` cho từng BibTeX entry.
 - Sinh nhãn nhị phân cho toàn bộ không gian `m × n`; candidate đúng là 1, các candidate còn lại là 0.
 - Người khác review toàn bộ positive labels và ít nhất 10% negative labels.
@@ -451,12 +454,12 @@ Mỗi thành viên:
 **Gán nhãn tự động**
 
 - Tối thiểu 10% số publication còn lại của mỗi thành viên; với dải khoảng 5.000 bài, mục tiêu tối thiểu 500 publication/người.
-- Publication phải có `m > 0` BibTeX entries và `n > 0` Semantic Scholar references.
+- Chọn publication có `m > 0`; trường hợp không có candidate vẫn được biểu diễn bằng nhãn không đối ứng, không sửa denominator về riêng tập dễ/đủ điều kiện.
 - Luật high-precision:
   - DOI/arXiv ID exact; hoặc
   - normalized title exact; hoặc
   - title similarity rất cao kết hợp first-author match và year difference ≤1.
-- Chỉ nhận match duy nhất có margin đủ lớn; trường hợp mơ hồ để unlabeled.
+- Trong publication auto đã chọn, phải gán nhãn toàn bộ entry. Trường hợp mơ hồ cần giải quyết/review hoặc thay cả publication trước khóa pool; không bỏ riêng entry thành unlabeled để làm đẹp điểm.
 - Audit thủ công tối thiểu 100 automatic positives toàn nhóm; nếu precision dưới 98%, tăng threshold và chạy lại.
 - Báo rõ denominator, số đủ điều kiện và lý do loại.
 
@@ -497,7 +500,7 @@ Mô hình nhóm:
 - Thành: hierarchy features và review labels của Quang.
 - Thông: leakage audit và review labels của Thành.
 - Quang review labels của Thông.
-- Mỗi người tự chịu trách nhiệm tối thiểu 5 publication/20 positive pairs của mình.
+- Mỗi người chịu trách nhiệm ≥5 publication, ≥20 entry/publication và ≥100 entry manual; nhãn không có đối ứng vẫn hợp lệ.
 
 ---
 
@@ -523,7 +526,7 @@ Toàn bộ `m × n` pair được giữ. Nếu bộ nhớ không đủ, xử lý
 - Với mỗi citation key, score toàn bộ `n` candidates, sắp xếp giảm dần và chọn top 5.
 - Tie-break theo normalized `ref_arxiv_id` để kết quả xác định.
 - Nếu `n < 5`, các cột còn lại là null.
-- MRR chỉ tính trên citation có ground truth; đồng thời báo coverage.
+- MRR@5 tính trên toàn bộ BibTeX entry test được gán nhãn; đáp án ngoài top-5 hoặc không có đối ứng nhận 0, không tự loại khỏi mẫu số. Báo thêm coverage.
 - Báo:
   - pooled MRR;
   - MRR của manual test;
@@ -569,7 +572,7 @@ Toàn bộ `m × n` pair được giữ. Nếu bộ nhớ không đủ, xử lý
 
 **Việc cần làm**
 
-- Flatten JSON/BibTeX thành đúng bảy bảng.
+- Flatten JSON/BibTeX thành đúng sáu bảng theo đề trực tuyến.
 - Dùng Arrow types rõ ràng:
   - dictionary encoding cho `kind`, `entry_type`, `partition`;
   - list of strings cho authors/revised dates;
@@ -577,7 +580,7 @@ Toàn bộ `m × n` pair được giữ. Nếu bộ nhớ không đủ, xử lý
   - các field thiếu dùng null, không dùng chuỗi `"None"`.
 - Kiểm tra primary key, foreign key, uniqueness và nullable constraints.
 - `predictions` chỉ gồm publications tham gia M3.
-- `sources` chỉ chứa text LaTeX/BibTeX, không chứa binary.
+- Raw source chỉ giữ `.tex`/`.bib` nguyên byte, không xuất bảng `sources`.
 - Ghi Parquet với ZSTD, shard mục tiêu khoảng 200 MB để viewer/streaming hoạt động tốt.
 - Dataset card tiếng Việt gồm:
   - nguồn dữ liệu và mục đích;
@@ -723,11 +726,11 @@ Dự án chỉ hoàn thành khi:
 - Không có data/binary/secret trong Git.
 - M1 và M2 có end-to-end resume.
 - Parser output qua graph/schema validation.
-- Mỗi thành viên đạt ≥5 manual publications và ≥20 positive associations.
+- Mỗi thành viên đạt ≥5 publication manual, mỗi publication ≥20 entry có nhãn và tổng ≥100 entry.
 - Automatic labels đạt ≥10% phần còn lại theo từng thành viên.
 - Split được thực hiện theo publication và không có leakage.
 - Model tạo top 5 xác định và MRR tái lập được.
-- Ba HF datasets có đủ bảy bảng và load được.
+- Ba HF datasets có đủ sáu bảng đúng tên/schema và load được.
 - Jupyter Book build sạch trên URL đã nộp.
 - Poster đúng một slide A2 dọc và có bằng chứng định lượng.
 - README cho phép một người mới thiết lập môi trường và chạy lại từng stage.

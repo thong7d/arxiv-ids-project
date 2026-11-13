@@ -66,7 +66,7 @@ def test_hierarchy_schema_empty_versions():
 
 
 def test_pyarrow_schemas_exist():
-    assert len(TABLE_SCHEMAS) == 7
+    assert set(TABLE_SCHEMAS) == {"papers", "references", "elements", "hierarchy", "bibtex", "predictions"}
     for name, schema in TABLE_SCHEMAS.items():
         assert isinstance(schema, pa.Schema)
         assert len(schema.names) > 0

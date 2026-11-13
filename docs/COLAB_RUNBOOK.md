@@ -1,5 +1,10 @@
 # Colab M1 — Nhóm 13
 
+> **13/11/2026:** ưu tiên [M1_RECOVERY_V3.md](M1_RECOVERY_V3.md) cho launcher,
+> monitor, commit và điều phối quota. Không dùng vòng lặp giữ kernel hoặc PID-only
+> monitor cũ. Các lệnh campaign mạng cần `--coordinated-network` sau khi thống nhất
+> dừng các crawler cạnh tranh. Không chạy thêm lúc Thành/Quang còn cào.
+
 > Cập nhật 02/11: lượt v2 dừng trước pilot vì API HTTP 500 tại offset 10.000. Discovery v3 chia theo tuần, tự tách tiếp nếu shard vượt 8.000 kết quả, cache riêng theo khoảng ngày. Campaign hiện hành là `m1-final-v3` và pilot `m1-pilot-v3`. Giữ toàn bộ thư mục/log v2 để audit, không trộn các lần chạy khác thuật toán thành một benchmark cuối.
 
 ## Trạng thái và nơi lưu

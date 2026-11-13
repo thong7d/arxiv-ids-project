@@ -6,7 +6,10 @@ import re
 import shutil
 import tarfile
 import tempfile
+import time
 import xml.etree.ElementTree as ET
+import zipfile
+import zlib
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -35,6 +38,8 @@ FIGURE_EXTENSIONS = {
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 1024 * 1024 * 1024
 MAX_MEMBERS = 10000
+SOURCE_SUFFIXES = {".tex", ".bib"}
+SOURCE_POLICY = "original_tex_bib_only_v1"
 
 
 def normalize_date(value):
@@ -53,6 +58,63 @@ class ArxivCrawler:
         self.events = events
         self.last_error = None
 
+    def prefetch_metadata(self, ids):
+        """Refresh a target-only Atom batch; never trust an old discovery as fresh."""
+        ids = list(dict.fromkeys(to_arxiv_id(aid) for aid in ids))
+        now = time.time()
+        missing = [aid for aid in ids if not 0 <= now - self.metadata_cache.get(aid, {}).get("atom_fetched_epoch", 0) < 1800]
+        updated = 0
+        for start in range(0, len(missing), 100):
+            batch = missing[start:start + 100]
+            try:
+                with get_response(self.session, "https://export.arxiv.org/api/query", arxiv_limiter,
+                                  params={"id_list": ",".join(batch), "max_results": len(batch)},
+                                  timeout=(10, 25), attempts=1, events=self.events,
+                                  defer_on_rate_limit=True) as response:
+                    records, _ = parse_atom(response.content)
+                for record in records:
+                    aid = record["arxiv_id"]
+                    old = self.metadata_cache.get(aid, {})
+                    if aid in batch and int(record.get("latest_version") or 1) >= int(old.get("latest_version") or 1):
+                        self.metadata_cache[aid] = {**record, "atom_fetched_epoch": time.time(),
+                                                    "version_metadata": old.get("version_metadata", {})}
+                        updated += 1
+            except (RequestFailure, ET.ParseError, ValueError, KeyError):
+                break  # Per-paper authoritative fallback remains available.
+        snapshots = self.prefetch_version_metadata(ids)
+        return {"requested": len(missing), "updated": updated + snapshots}
+
+    def prefetch_version_metadata(self, ids):
+        """Batch actual versioned Atom entries, not copies of the latest title."""
+        wanted = {}
+        for aid in ids:
+            record = self.metadata_cache.get(aid, {})
+            latest = int(record.get("latest_version") or 1)
+            versions = record.setdefault("version_metadata", {})
+            if 0 <= time.time() - record.get("atom_fetched_epoch", 0) < 1800:
+                versions[str(latest)] = {k: v for k, v in record.items() if k != "version_metadata"}
+            for version in range(1, latest + 1):
+                if str(version) not in versions:
+                    wanted[f"{aid}v{version}"] = (aid, version)
+        updated = 0
+        keys = list(wanted)
+        for start in range(0, len(keys), 100):
+            batch = keys[start:start + 100]
+            try:
+                with get_response(self.session, "https://export.arxiv.org/api/query", arxiv_limiter,
+                                  params={"id_list": ",".join(batch), "max_results": len(batch)},
+                                  timeout=(10, 25), attempts=1, events=self.events, defer_on_rate_limit=True) as response:
+                    records, _ = parse_atom(response.content)
+                for row in records:
+                    key = f"{row['arxiv_id']}v{int(row['latest_version'])}"
+                    if key in wanted:
+                        aid, version = wanted[key]
+                        self.metadata_cache[aid].setdefault("version_metadata", {})[str(version)] = row
+                        updated += 1
+            except (RequestFailure, ET.ParseError, ValueError, KeyError, TypeError):
+                break
+        return updated
+
     def fetch_metadata(self, arxiv_id):
         clean_id = to_arxiv_id(arxiv_id)
         self.last_error = None
@@ -70,49 +132,104 @@ class ArxivCrawler:
                 if not records:
                     raise RequestFailure("Publication absent from arXiv API", 404, False)
                 record = records[0]
-            # arXivRaw records expose every version's actual date. Do not invent
-            # intermediate revision timestamps from the Atom first/last dates.
-            with get_response(
-                self.session,
-                "https://oaipmh.arxiv.org/oai",
-                arxiv_limiter,
-                params={
-                    "verb": "GetRecord",
-                    "identifier": f"oai:arXiv.org:{clean_id}",
-                    "metadataPrefix": "arXivRaw",
-                },
-                events=self.events,
-            ) as response:
-                root = ET.fromstring(response.content)
-            error = root.find("{*}error")
-            if error is not None:
-                raise RequestFailure(
-                    f"OAI error {error.get('code')}: {error.text}", retryable=False
-                )
+                record["atom_fetched_epoch"] = time.time()
+                self.metadata_cache[clean_id] = record
+            self.prefetch_version_metadata([clean_id])
+            version_metadata = record.get("version_metadata", {})
             version_dates = {}
-            for node in root.findall(".//{*}version"):
-                version = int(node.get("version", "v0").lstrip("v"))
-                date = node.findtext("{*}date")
-                if version and date:
-                    version_dates[version] = normalize_date(date.strip())
-            latest = max(int(record["latest_version"]), max(version_dates, default=0))
-            if set(version_dates) != set(range(1, latest + 1)):
-                raise RequestFailure(
-                    "OAI version dates are incomplete; retry metadata instead of fabricating dates"
-                )
+            date_sources = {}
+            license_text = None
+            metadata_source = "arxiv_atom+oai_arXivRaw"
+            atom_latest = int(record.get("latest_version") or 1)
+            for number, snapshot in version_metadata.items():
+                date = snapshot.get("submission_date") if int(number) == 1 else snapshot.get("latest_updated")
+                if date:
+                    version_dates[int(number)] = normalize_date(date)
+                    date_sources[int(number)] = "arxiv_atom_published" if int(number) == 1 else "arxiv_atom_version_updated"
+            recent_atom = (0 <= time.time() - record.get("atom_fetched_epoch", 0) < 1800
+                           and atom_latest <= 2 and record.get("submission_date")
+                           and (atom_latest == 1 or record.get("latest_updated")))
+            # Recent Atom supplies every date for v1/v2; older or more
+            # complex records still require authoritative OAI/versioned queries.
+            if not recent_atom and set(version_dates) != set(range(1, atom_latest + 1)):
+                try:
+                    with get_response(
+                        self.session,
+                        "https://oaipmh.arxiv.org/oai",
+                        arxiv_limiter,
+                        params={
+                            "verb": "GetRecord",
+                            "identifier": f"oai:arXiv.org:{clean_id}",
+                            "metadataPrefix": "arXivRaw",
+                        },
+                        timeout=(5, 10),
+                        attempts=1,
+                        events=self.events,
+                    ) as response:
+                        root = ET.fromstring(response.content)
+                    error = root.find("{*}error")
+                    if error is None:
+                        for node in root.findall(".//{*}version"):
+                            version = int(node.get("version", "v0").lstrip("v"))
+                            date = node.findtext("{*}date")
+                            if version and date:
+                                version_dates[version] = normalize_date(date.strip())
+                                date_sources[version] = "oai_arXivRaw"
+                        license_text = root.findtext(".//{*}license")
+                except (RequestFailure, ET.ParseError, ValueError, KeyError):
+                    pass
+
+            latest = max(int(record.get("latest_version") or 1), max(version_dates, default=0))
+            sub_date = normalize_date(record["submission_date"]) if record.get("submission_date") else None
+            upd_date = normalize_date(record["latest_updated"]) if record.get("latest_updated") else (sub_date if latest == 1 else None)
+            if 1 not in version_dates and sub_date:
+                version_dates[1] = sub_date
+                date_sources[1] = "arxiv_atom_published"
+            if latest not in version_dates and upd_date:
+                version_dates[latest] = upd_date
+                date_sources[latest] = "arxiv_atom_updated"
+            missing = [v for v in range(1, latest + 1) if v not in version_dates]
+            # The API accepts versioned IDs. Retrieve the actual updated date
+            # for each missing revision; never copy the last revision date.
+            for start in range(0, len(missing), 100):
+                batch = missing[start:start + 100]
+                try:
+                    with get_response(self.session, "https://export.arxiv.org/api/query",
+                                      arxiv_limiter, params={"id_list": ",".join(f"{clean_id}v{v}" for v in batch),
+                                                             "max_results": len(batch)},
+                                      events=self.events, attempts=1) as response:
+                        entries, _ = parse_atom(response.content)
+                    for entry in entries:
+                        v = int(entry["latest_version"])
+                        if entry["arxiv_id"] == clean_id and v in batch and entry.get("latest_updated"):
+                            version_dates[v] = normalize_date(entry["latest_updated"])
+                            date_sources[v] = "arxiv_atom_version_updated"
+                except (RequestFailure, ET.ParseError, ValueError, KeyError):
+                    continue
+            if "oai_arXivRaw" not in date_sources.values():
+                metadata_source = "arxiv_atom_recent_batch" if recent_atom else "arxiv_atom_fallback"
+
             metadata = {
                 "title": record["title"],
                 "authors": record["authors"],
-                "submission_date": version_dates[1],
-                "revised_dates": [version_dates[v] for v in sorted(version_dates)],
-                "version_dates": {str(k): v for k, v in version_dates.items()},
+                "submission_date": version_dates.get(1, sub_date),
+                "revised_dates": [version_dates[v] for v in sorted(version_dates) if v > 1 and version_dates[v]],
+                "version_dates": {str(k): v for k, v in version_dates.items() if v},
+                "version_date_sources": {str(k): v for k, v in date_sources.items()},
+                "metadata_dates_complete": set(version_dates) == set(range(1, latest + 1)),
+                "missing_version_dates": [v for v in range(1, latest + 1) if v not in version_dates],
+                "metadata_quality_version": 3,
+                "version_metadata": version_metadata,
+                "version_metadata_complete": all(str(v) in version_metadata for v in range(1, latest + 1)),
+                "atom_fetched_epoch": record.get("atom_fetched_epoch"),
                 "venue": record.get("venue"),
-                "metadata_source": "arxiv_atom+oai_arXivRaw",
-                "license": root.findtext(".//{*}license"),
+                "metadata_source": metadata_source,
+                "license": license_text,
             }
             return metadata, list(range(1, latest + 1))
         except (RequestFailure, ET.ParseError, ValueError, KeyError) as error:
             self.last_error = str(error)
+            self.last_retry_epoch = time.time() + max(120, getattr(error, "retry_after", 0))
             return None
 
     def download_and_extract_version(self, clean_id, version, target_vdir):
@@ -128,6 +245,7 @@ class ArxivCrawler:
             "saved_bytes": 0,
             "error": None,
             "files": {},
+            "source_policy": SOURCE_POLICY,
         }
         # Extraction happens in a local staging directory on the local SSD,
         # never directly inside Google Drive FUSE. This prevents uploading
@@ -163,31 +281,17 @@ class ArxivCrawler:
                     return status
                 if not self._safe_extract(archive, extracted):
                     raise ValueError("Unsupported, unsafe or corrupt source archive")
-                status["initial_bytes"] = sum(
-                    p.stat().st_size for p in extracted.rglob("*") if p.is_file()
-                )
-                for path in extracted.rglob("*"):
-                    if not path.is_file():
-                        continue
-                    remove = path.suffix.lower() in FIGURE_EXTENSIONS
-                    if not remove:
-                        try:
-                            sample = path.read_bytes()[:8192]
-                            if b"\x00" in sample:
-                                remove = True
-                            else:
-                                sample.decode("utf-8")
-                        except UnicodeDecodeError:
-                            # Preserve common legacy TeX encodings, but reject
-                            # opaque binary by checking control-byte density.
-                            remove = sum(c < 32 and c not in (9, 10, 12, 13) for c in sample) > max(
-                                2, len(sample) // 100
-                            )
-                    if remove:
-                        path.unlink()
+                status["initial_bytes"] = self.last_extraction_stats["initial_bytes"]
                 inventory = file_inventory(extracted)
                 if not inventory:
-                    raise ValueError("Source contains no usable text files")
+                    # Valid PDF/Word/other non-TeX versions remain explicitly
+                    # empty; never turn an HTML error page into an empty source.
+                    target_vdir.mkdir(parents=True, exist_ok=True)
+                    if any(target_vdir.iterdir()):
+                        raise ValueError("Non-TeX version has stale source files; preserve for audit")
+                    status.update(success=True, state="non_tex_source", empty_reason="valid_archive_without_tex_or_bib",
+                                  downloaded_bytes=archive.stat().st_size, saved_bytes=status["initial_bytes"])
+                    return status
                 target_vdir.mkdir(parents=True, exist_ok=True)
                 # Clear target_vdir of any stale files safely
                 for old_f in target_vdir.glob("*"):
@@ -211,7 +315,8 @@ class ArxivCrawler:
                 status["saved_bytes"] = status["initial_bytes"] - status["stripped_bytes"]
             except RequestFailure as error:
                 status.update(
-                    error=str(error), state="retryable_error" if error.retryable else "not_found"
+                    error=str(error), state="retryable_error" if error.retryable else "not_found",
+                    next_retry_epoch=time.time() + (max(60, error.retry_after) if error.retryable else 86400),
                 )
             except (requests.RequestException, ValueError, OSError) as error:
                 status["error"] = f"{type(error).__name__}: {error}"
@@ -287,6 +392,7 @@ class ArxivCrawler:
         raise RequestFailure("Source transfer request budget exhausted")
 
     def _safe_extract(self, archive_path, dest_dir):
+        self.last_extraction_stats = {"initial_bytes": 0, "source_policy": SOURCE_POLICY}
         try:
             dest_dir = Path(dest_dir).resolve()
             # Read gzip through EOF to verify its CRC/trailer before extraction.
@@ -317,12 +423,32 @@ class ArxivCrawler:
                             or not (member.isfile() or member.isdir())
                         ):
                             return False
-                        if member.isdir():
-                            path.mkdir(parents=True, exist_ok=True)
-                        else:
+                        if member.isfile() and path.suffix.lower() in SOURCE_SUFFIXES:
                             path.parent.mkdir(parents=True, exist_ok=True)
                             with archive.extractfile(member) as source, path.open("wb") as output:
                                 shutil.copyfileobj(source, output, 65536)
+                    self.last_extraction_stats["initial_bytes"] = total
+                return True
+            if zipfile.is_zipfile(archive_path):
+                with zipfile.ZipFile(archive_path) as archive:
+                    entries = archive.infolist()
+                    if len(entries) > MAX_MEMBERS or sum(v.file_size for v in entries) > MAX_EXTRACTED_BYTES:
+                        return False
+                    for entry in entries:
+                        # ZIP paths use '/', but reject Windows separators too.
+                        if "\\" in entry.filename:
+                            return False
+                        path = (dest_dir / entry.filename).resolve()
+                        mode = entry.external_attr >> 16
+                        if not path.is_relative_to(dest_dir) or mode & 0o170000 == 0o120000:
+                            return False
+                        if not entry.is_dir() and path.suffix.lower() in SOURCE_SUFFIXES:
+                            path.parent.mkdir(parents=True, exist_ok=True)
+                            with archive.open(entry) as source, path.open("wb") as output:
+                                shutil.copyfileobj(source, output, 65536)
+                    if archive.testzip() is not None:
+                        return False
+                    self.last_extraction_stats["initial_bytes"] = sum(v.file_size for v in entries)
                 return True
             with Path(archive_path).open("rb") as handle:
                 compressed = handle.read(2) == b"\x1f\x8b"
@@ -334,6 +460,7 @@ class ArxivCrawler:
             if not (b"\\document" in content or b"\\begin" in content or b"\\input" in content):
                 return False
             (dest_dir / "main.tex").write_bytes(content)
+            self.last_extraction_stats["initial_bytes"] = len(content)
             return True
-        except (OSError, EOFError, tarfile.TarError, ValueError):
+        except (OSError, EOFError, tarfile.TarError, zipfile.BadZipFile, ValueError, zlib.error):
             return False

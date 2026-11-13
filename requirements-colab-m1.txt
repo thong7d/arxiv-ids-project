@@ -1,0 +1,9 @@
+# M1 collection/validation only; exact installed versions are recorded by preflight.
+requests>=2.28
+pandas>=2.0
+pyarrow>=14.0
+pydantic>=2.5
+psutil>=5.9
+pytest>=7.4
+typer>=0.12
+pyyaml>=6.0
