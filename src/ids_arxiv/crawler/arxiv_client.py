@@ -17,6 +17,7 @@ from pathlib import Path
 import requests
 
 from ..discovery import parse_atom, to_arxiv_id
+from ..identity import user_agent
 from ..storage import file_inventory, sha256_file
 from .http import RequestFailure, get_response
 from .rate_limiter import arxiv_limiter
@@ -51,9 +52,9 @@ def normalize_date(value):
 
 class ArxivCrawler:
     def __init__(self, contact_email=None, metadata_cache=None, events=None):
-        self.email = contact_email or os.getenv("ARXIV_CONTACT_EMAIL", "thongpham796@gmail.com")
+        self.email = contact_email or os.getenv("ARXIV_CONTACT_EMAIL", "")
         self.session = requests.Session()
-        self.session.headers["User-Agent"] = f"FIT-HCMUS-IDS-Group13/2.0 (contact: {self.email})"
+        self.session.headers["User-Agent"] = user_agent(self.email)
         self.metadata_cache = metadata_cache or {}
         self.events = events
         self.last_error = None

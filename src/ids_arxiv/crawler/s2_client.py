@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import requests
 
 from ..discovery import to_arxiv_id, to_dir_id
+from ..identity import user_agent
 from ..storage import utc_now
 from .http import RequestFailure, get_response
 from .rate_limiter import PoliteRateLimiter, s2_limiter
@@ -20,7 +21,7 @@ class SemanticScholarClient:
     def __init__(self, api_key=None, events=None, deferred=False):
         self.api_key = api_key or os.getenv("SEMANTIC_SCHOLAR_API_KEY", "").strip() or None
         self.session = requests.Session()
-        self.session.headers["User-Agent"] = "FIT-HCMUS-IDS-Group13/2.0"
+        self.session.headers["User-Agent"] = user_agent()
         if self.api_key:
             self.session.headers["x-api-key"] = self.api_key
         self.limiter = (SharedQuota(3.05, "s2", self.api_key or "anonymous")

@@ -4,6 +4,13 @@ Phiên bản mới: protocol 4. Không có server/coordinator xuyên Colab, khô
 dịch vụ. Coordinator trong mỗi runtime vẫn quản lý process, checkpoint và retry.
 Notebook chung: `notebooks/IDS13_M1_Colab.ipynb`.
 
+Định danh HTTP: User-Agent chứa MSSV người chạy và email từ Secrets của chính
+tài khoản Colab đó; S2 đọc key cá nhân từ `SEMANTIC_SCHOLAR_API_KEY`.
+Ba tài khoản dùng cùng tên Secret nhưng giá trị riêng; không đặt key/email lên
+Drive. arXiv API công khai không cần key hay đăng nhập arXiv riêng. Đổi email/
+User-Agent không tạo quota mới và không bảo đảm hết 429; vẫn giữ lịch UTC,
+giới hạn chung, backoff/Retry-After. Mỗi MSSV chỉ có một runtime đang chạy.
+
 ## Cập nhật giao diện Run all (13/11, phiên tối)
 
 Notebook hiện có **3 code cell**: (1) chọn MSSV + setup/source/dependencies,

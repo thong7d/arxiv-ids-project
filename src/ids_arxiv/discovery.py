@@ -11,6 +11,8 @@ from typing import List, Optional, Tuple
 
 import pandas as pd
 
+from .identity import user_agent
+
 
 @dataclass
 class MemberRange:
@@ -262,8 +264,6 @@ def discover_publications(members: List[MemberRange], cache_dir: Path, events=No
     Cache pages for resuming discovery, but a benchmark campaign uses its own cache.
     Pad dates to accommodate identifier-month/publication-date boundary differences.
     """
-    import os
-
     import requests
 
     from .crawler.http import get_response
@@ -278,11 +278,7 @@ def discover_publications(members: List[MemberRange], cache_dir: Path, events=No
     end_date = next_month + timedelta(days=7)
     end_date = end_date.replace(hour=23, minute=59)
     session = requests.Session()
-    session.headers["User-Agent"] = (
-        "FIT-HCMUS-IDS-Group13/2.0 (contact: "
-        + os.getenv("ARXIV_CONTACT_EMAIL", "thongpham796@gmail.com")
-        + ")"
-    )
+    session.headers["User-Agent"] = user_agent()
     cache_dir.mkdir(parents=True, exist_ok=True)
     records = {}
     scanned = 0

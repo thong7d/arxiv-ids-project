@@ -12,6 +12,7 @@ from ids_arxiv.crawler.http import RequestFailure, get_response
 from ids_arxiv.crawler.s2_client import SemanticScholarClient
 from ids_arxiv.crawler.shared_quota import SharedQuota
 from ids_arxiv.discovery import load_members
+from ids_arxiv.identity import user_agent
 
 
 def probe(variant, ids, members_path):
@@ -34,7 +35,7 @@ def probe(variant, ids, members_path):
         result["raw_counts"] = {aid: status["raw_count"] for aid, (refs, status) in client.cache.items()}
     else:
         session = requests.Session()
-        session.headers.update({"x-api-key": key, "User-Agent": "FIT-HCMUS-IDS-Group13/S2-bounded-probe"})
+        session.headers.update({"x-api-key": key, "User-Agent": user_agent()})
         limit = int(variant.removeprefix("paged"))
         try:
             with get_response(session, f"https://api.semanticscholar.org/graph/v1/paper/arXiv:{ids[0]}/references",
