@@ -27,9 +27,12 @@ class ColabApp:
         self.config = config
 
     def call(self, action, stage="auto", confirm_run_id=""):
-        command = [sys.executable, "-m", "ids_arxiv.team_run", action,
-                   "--config-json", json.dumps(self.config), "--stage", stage,
+        bounded = self.config.get("workflow_mode") == "bounded" and action != "preflight"
+        module = "ids_arxiv.workflow" if bounded else "ids_arxiv.team_run"
+        command = [sys.executable, "-m", module, action, "--config-json", json.dumps(self.config),
                    "--confirm-run-id", confirm_run_id]
+        if not bounded:
+            command.extend(["--stage", stage])
         # CLI subprocesses are short-lived, detached from notebook Interrupt.
         # Long-lived crawler output goes to its local worker.log, never a PIPE.
         with tempfile.TemporaryFile(mode="w+b") as log:
@@ -48,6 +51,10 @@ class ColabApp:
         return json.loads(lines[-1])
 
     def snapshot(self):
+        if self.config.get("workflow_mode") == "bounded":
+            value = self.call("status")
+            value["recent_metrics"] = ColabApp({**self.config, "workflow_mode": "legacy"}).snapshot()["recent_metrics"]
+            return value
         record, health = current_worker_record(self.config["runner_id"])
         summaries = owner_summaries(self.config)
         legacy = record.get("summary", {})
@@ -74,6 +81,8 @@ class ColabApp:
         return {"health": health, "record": record, "owners": summaries, "recent_metrics": metrics}
 
     def monitor(self, seconds=30, interval=10):
+        if self.config.get("workflow_mode") == "bounded":
+            return self.monitor_workflow(seconds, interval)
         from datetime import datetime
         from zoneinfo import ZoneInfo
         previous = {}
@@ -109,11 +118,73 @@ class ColabApp:
         print("Worker chạy nền độc lập. Chạy lại cell Monitor để xem tiếp; không cần giữ cell chạy vô hạn.")
         return value
 
+    def monitor_workflow(self, seconds=30, interval=10):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        deadline = time.monotonic() + max(0, seconds)
+        while True:
+            value = self.snapshot()
+            record, health = value["local_record"], value["local_health"]
+            stamp = datetime.now(ZoneInfo("Asia/Bangkok")).strftime("%H:%M:%S")
+            print(f"[{stamp}] MSSV {value['selected_owner']} | {health['health']} | khâu: {record.get('stage', 'chưa chạy')}")
+            if record.get("run_id"):
+                print(f"  run_id: {record['run_id']}")
+            crawl = record.get("crawl", {})
+            if record.get("stage") == "crawl" and crawl:
+                progress = crawl.get("summary", {})
+                print(f"  Khâu con: {crawl.get('stage', 'chuẩn bị')} | bài: {crawl.get('current_paper', '—')}")
+                if progress:
+                    print(f"  ID đã xử lý: {progress.get('total_attempted', '?')}/{progress.get('selected_publications', 5000)} | "
+                          f"source: {progress.get('source_success_count', '?')} | "
+                          f"references: {progress.get('reference_success_count', '?')}")
+                else:
+                    print("  Đang đọc checkpoint/chuẩn bị; chưa có bộ đếm mới, không suy ra dữ liệu bằng 0.")
+            audit = record.get("audit", {})
+            if audit:
+                print(f"  Audit: {audit.get('assessed_count', 0)}/5000 | bài: {audit.get('current_paper', '—')} | "
+                      f"tái dùng: {audit.get('reused_assessments', 0)}")
+            for owner, item in value["owners"].items():
+                closure = item.get("closure", {})
+                if closure.get("operational_closed") or closure.get("workflow_finished"):
+                    print(f"  {owner}: {'ĐÃ CHỐT VẬN HÀNH' if closure.get('operational_closed') else 'DỪNG, CẦN XEM NGOẠI LỆ'} | {closure.get('counts', {})}")
+                    if closure.get("academic_exception_approval_pending"):
+                        print("    Ngoại lệ S2 còn cần xác nhận học thuật; không phải 5000 lượt tải thành công.")
+                elif item.get("audit"):
+                    saved = item["audit"]
+                    print(f"  {owner}: checkpoint audit {saved.get('assessed_count', 0)}/5000 | {saved.get('state')}")
+                else:
+                    summary = item.get("crawl") or item.get("legacy_crawl", {})
+                    if owner == value["selected_owner"]:
+                        summary = record.get("crawl", {}).get("summary") or summary
+                    if summary:
+                        label = "bộ đếm cũ, CHƯA audit" if not item.get("crawl") else "crawl, CHƯA audit"
+                        print(f"  {owner}: {summary.get('success_count', '?')}/5000 ({label}) | "
+                              f"chờ {summary.get('pending_count', '?')} | hết ngân sách {summary.get('quarantined_count', 0)}")
+                    else:
+                        print(f"  {owner}: chưa đọc được checkpoint; KHÔNG suy ra dữ liệu bằng 0. {item.get('read_error', '')}")
+            if record.get("error"):
+                print("  Lỗi cần xử lý:", record["error"])
+            for metrics in value.get("recent_metrics", {}).values():
+                if metrics.get("attempts"):
+                    latency = metrics["latency"]
+                    print(f"  Độ trễ/lượt: mean {latency['mean_s']:.2f}s | p50 {latency['p50_s']:.2f}s | "
+                          f"p95 {latency['p95_s']:.2f}s (n={latency['n']}, có cache; không phải cold benchmark)")
+                    print("  Khâu                             n    mean(s)    p95(s)")
+                    for name, stat in metrics["stages"].items():
+                        print(f"  {name:30} {stat['n']:4} {stat['mean_s']:10.3f} {stat['p95_s']:9.3f}")
+            if time.monotonic() >= deadline or health["health"] in {"STOPPED", "UNKNOWN"}:
+                break
+            time.sleep(min(interval, max(0, deadline-time.monotonic())))
+        print("Chỉ xử lý MSSV đã chọn. Bảng Drive là checkpoint, không chứng minh worker trên máy khác còn sống. Chạy lại Monitor để xem tiếp.")
+        return value
+
     def stop(self, confirm_run_id):
         return self.call("stop", confirm_run_id=confirm_run_id)
 
 
 def start(student_id, drive_root, **overrides):
+    if os.getenv("IDS_WORKFLOW_MODE") == "bounded":
+        overrides.setdefault("workflow_mode", "bounded")
     app = ColabApp(default_config(student_id, drive_root, **overrides))
     record, health = current_worker_record(app.config["runner_id"])
     if health["health"] in {"RUNNING", "WAITING", "STALLED"}:
@@ -135,7 +206,10 @@ def start(student_id, drive_root, **overrides):
                 raise RuntimeError(result.stdout[-5000:] + result.stderr[-1000:])
         receipt.touch()
     print("Tests: đạt. Preflight:", app.call("preflight"))
-    print("Khởi chạy probe 5 bài → tự chuyển đủ dải khi probe đạt:", app.call("launch"))
+    if app.config.get("workflow_mode") == "bounded":
+        print("Khởi chạy một dải: crawl hữu hạn → audit có resume → chốt ngoại lệ:", app.call("start"))
+    else:
+        print("Khởi chạy probe 5 bài → tự chuyển đủ dải khi probe đạt:", app.call("launch"))
     return app
 
 
@@ -150,7 +224,8 @@ if __name__ == "__main__":
     if args.action == "start":
         start(args.student_id, args.drive_root)
     else:
-        app = ColabApp(default_config(args.student_id, args.drive_root))
+        app = ColabApp(default_config(args.student_id, args.drive_root,
+                                     workflow_mode=os.getenv("IDS_WORKFLOW_MODE", "legacy")))
         if args.action == "monitor":
             app.monitor(args.seconds)
         elif args.action == "snapshot":

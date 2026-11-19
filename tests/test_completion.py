@@ -116,3 +116,31 @@ def test_owner_manifest_must_be_exact_and_all_outcomes_consistent():
     with pytest.raises(ValueError):
         account_owner("23120364", [], [])
     json.dumps(report)  # portable report, no non-JSON timestamp objects
+
+
+def test_freeze_s2_404_is_not_download_success_or_academic_closure(tmp_path):
+    root = tmp_path / "paper"
+    record, _ = publication(root)
+    record.update(success=False, references_status={"state": "not_indexed", "success": False,
+                  "http_status": 404, "raw_count": 0, "evidence": {
+                      "http_status": 404, "checked_at": utc_now(), "response_sha256": "b" * 64,
+                      "url": f"https://api.semanticscholar.org/graph/v1/paper/arXiv:{AID}/references"}})
+    atomic_json(root / "crawl_status.json", record)
+    before = (root / "crawl_status.json").read_bytes()
+    assert assess_publication(root, AID)["classification"] == "pending"
+    result = assess_publication(root, AID, allow_s2_unavailable=True)
+    assert result["classification"] == "references_unavailable" and not result["data_download_success"]
+    assert not account_owner("23120364", [AID], [result])["collection_closed"]
+    assert (root / "crawl_status.json").read_bytes() == before
+    record["references_status"]["http_status"] = 429
+    atomic_json(root / "crawl_status.json", record)
+    assert assess_publication(root, AID, allow_s2_unavailable=True)["classification"] == "pending"
+
+
+def test_proven_historical_404_survives_later_window_deferral(tmp_path):
+    root = tmp_path / "paper"
+    record, proof = publication(root, withdrawn=True)
+    record["versions"][1]["error"] = "arXiv UTC window deferred"
+    proof.update(source_failure_recorded="HTTP 404", source_url=f"https://export.arxiv.org/src/{AID}v2")
+    atomic_json(root / "crawl_status.json", record)
+    assert assess_publication(root, AID, {AID + "v2": proof})["classification"] == "verified_exception"

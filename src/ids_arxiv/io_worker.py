@@ -12,6 +12,20 @@ from .storage import atomic_json, sha256_file
 
 def handle(request):
     action = request["action"]
+    if action == "owner_snapshot":
+        base, owner = Path(request["base"]), request["owner"]
+        result = {}
+        for key, path in (("closure", base / "closure.json"), ("audit", base / "audit-progress.json"),
+                          ("crawl", base / "raw" / f"crawl_summary-{owner}.json")):
+            value = read_json(path, {})
+            value.pop("records", None)
+            value.pop("failed_ids", None)
+            result[key] = value
+        if not result["crawl"]:
+            value = read_json(Path(request["legacy_raw"]) / f"crawl_summary-{owner}.json", {})
+            value.pop("failed_ids", None)
+            result["legacy_crawl"] = value
+        return result
     if action == "cache_catalog":
         root = Path(request["root"]).resolve()
         result = []
@@ -27,6 +41,9 @@ def handle(request):
         return import_source_cache(request["source"], request["local"], request["arxiv_id"])
     if action == "read_json":
         return read_json(request["path"], request.get("default"))
+    if action == "marker_hash":
+        path = Path(request["path"]) / "crawl_status.json"
+        return sha256_file(path) if path.is_file() else None
     if action == "legacy_prefix":
         summary = read_json(request["summary"], {})
         count = request["count"]

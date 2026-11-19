@@ -16,7 +16,8 @@ import psutil
 from .storage import atomic_json, utc_now
 
 TERMINAL = {"finished", "completed", "interrupted", "failed", "stopped", "needs_attention",
-            "needs_recovery", "session_budget_reached"}
+            "needs_recovery", "session_budget_reached", "stopped_for_review",
+            "stopped_with_documented_exceptions"}
 
 
 def runtime_id():

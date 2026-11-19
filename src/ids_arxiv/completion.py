@@ -13,7 +13,6 @@ from ids_arxiv.checkpoint import (
     SOURCE_POLICY,
     read_json,
     reference_snapshot_consistent,
-    verified_record,
 )
 from ids_arxiv.schemas.metadata import PaperMetadata, ReferenceItem
 from ids_arxiv.storage import sha256_file, utc_now, verify_inventory
@@ -43,7 +42,7 @@ def _withdrawn(evidence, aid, version):
     )
 
 
-def assess_publication(directory, aid, withdrawal_records=None):
+def assess_publication(directory, aid, withdrawal_records=None, allow_s2_unavailable=False):
     """Verify local/readback bytes. Caller must impose a deadline for Drive I/O.
 
     Missing S2 references and their temporary errors remain pending. Only the
@@ -86,7 +85,14 @@ def assess_publication(directory, aid, withdrawal_records=None):
             raise ValueError("Inconsistent version/submission dates")
         ref_status = record.get("references_status", {})
         all_references = read_json(directory / "references_all.json")
-        if (not ref_status.get("success") or not ref_status.get("dates_complete")
+        s2_evidence = ref_status.get("evidence", {})
+        unavailable = bool(allow_s2_unavailable and not record.get("success")
+                           and not ref_status.get("success") and ref_status.get("state") == "not_indexed"
+                           and ref_status.get("http_status") == s2_evidence.get("http_status") == 404
+                           and s2_evidence.get("url") == f"https://api.semanticscholar.org/graph/v1/paper/arXiv:{aid}/references"
+                           and re.fullmatch(r"[0-9a-f]{64}", s2_evidence.get("response_sha256", ""))
+                           and _date(s2_evidence["checked_at"]) and references == {} and all_references == [])
+        if not unavailable and (not ref_status.get("success") or not ref_status.get("dates_complete")
                 or not ref_status.get("all_references_retained") or not isinstance(all_references, list)
                 or len(all_references) != ref_status.get("raw_count")
                 or not reference_snapshot_consistent(references, all_references)):
@@ -111,7 +117,9 @@ def assess_publication(directory, aid, withdrawal_records=None):
             target = directory / f"v{number}"
             if not version.get("success"):
                 proof = evidence.get(f"{aid}v{number}", {})
-                if version.get("error") != "HTTP 404" or not _withdrawn(proof, aid, number):
+                historical_404 = (proof.get("source_failure_recorded") == "HTTP 404"
+                                  and proof.get("source_url") == f"https://export.arxiv.org/src/{aid}v{number}")
+                if (version.get("error") != "HTTP 404" and not historical_404) or not _withdrawn(proof, aid, number):
                     raise ValueError(f"v{number}: failure has no authoritative withdrawal evidence")
                 result["withdrawn_versions"].append(number)
                 continue
@@ -126,11 +134,15 @@ def assess_publication(directory, aid, withdrawal_records=None):
                 raise ValueError(f"v{number}: source inventory mismatch")
             if any(p.is_file() and p.suffix.lower() not in {".tex", ".bib"} for p in target.rglob("*")):
                 raise ValueError(f"v{number}: forbidden binary/image file")
-        if result["withdrawn_versions"]:
+        if unavailable:
+            result["classification"] = "references_unavailable"
+        elif result["withdrawn_versions"]:
             if record.get("success") or record.get("source_success"):
                 raise ValueError("Withdrawal incorrectly marked as downloaded success")
             result["classification"] = "verified_exception"
-        elif record.get("success") and record.get("source_success") and verified_record(directory, record):
+        # All hashes/inventories/metadata and reference consistency were checked
+        # above; do not reread the entire Drive tree a second time here.
+        elif record.get("success") and record.get("source_success"):
             result.update(classification="full_success", data_download_success=True)
         else:
             raise ValueError("Not a verified complete publication")

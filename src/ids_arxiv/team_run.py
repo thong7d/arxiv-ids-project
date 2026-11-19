@@ -297,11 +297,19 @@ def main():
             raise ValueError("Enter the exact run_id from Monitor; never Stop/Interrupt the notebook kernel")
         print(json.dumps(stop_owned_worker(record)))
         return
+    if args.action == "launch" and args.stage != "audit":
+        with IsolatedService("ids_arxiv.io_worker", timeout=30) as io:
+            for owner in config["target_owner_ids"]:
+                receipt = io.call({"action": "read_json", "path": str(output_root(config, owner) / "closure.json"), "default": {}})
+                if (receipt.get("operational_closed") or receipt.get("audit_in_progress")
+                        or receipt.get("automatic_retry_suppressed")) and receipt.get("protocol_version") == PROTOCOL:
+                    print(json.dumps({"not_launched": True, "reason": "Owner corpus frozen after audit; no automatic retry. Review closure.json to reopen explicitly.", "owner": owner, "counts": receipt.get("counts"), "collection_closed": receipt.get("collection_closed")}))
+                    return
     for process in psutil.process_iter(["pid", "cmdline", "status"]):
         try:
             command = " ".join(process.info["cmdline"] or [])
             if process.info["status"] not in {psutil.STATUS_DEAD, psutil.STATUS_ZOMBIE} and any(
-                marker in command for marker in ("colab_autorun.py", "colab_campaign.py", "colab_install_and_run.py", "ids_arxiv.team_run worker")
+                marker in command for marker in ("colab_autorun.py", "colab_campaign.py", "colab_install_and_run.py", "ids_arxiv.team_run worker", "ids_arxiv.workflow worker")
             ):
                 print(json.dumps({"not_launched": True, "existing_pid": process.pid,
                                   "reason": "A crawler is already active; use Monitor/explicit Stop. Its configuration is unchanged."}))

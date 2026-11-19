@@ -26,6 +26,7 @@ from ..discovery import load_members, to_arxiv_id, to_dir_id
 from ..isolation import IsolatedService, TaskTimeout
 from ..network_schedule import configured_window
 from ..profiling import StageClock, profile_paper
+from ..retry_budget import bounded_result, had_http_activity
 from ..runtime import runtime_id
 from ..storage import atomic_json, sha256_file, utc_now, verify_inventory
 from ..validator import validate_raw_paper
@@ -102,6 +103,7 @@ def crawl_paper(arxiv_id, output_dir, arxiv_crawler, s2_client, resume=True):
         "success": False, "source_success": False, "metadata_dates_complete": False,
         "cache_hit": False, "commit_state": "staged", "started_at": utc_now(),
         "attempt_count": previous.get("attempt_count", 0) + 1,
+        "bounded_network_passes": previous.get("bounded_network_passes", 0),
         "versions": previous.get("versions", []) if trusted else [],
         "references_status": {"state": "pending", "success": False}, "error": None,
     }
@@ -234,7 +236,7 @@ def run_crawling_pipeline(
     manifest_path, output_dir, limit=None, pilot_mode=False, members_config=None,
     resume=True, student_id=None, max_seconds=None, paper_seconds=900, io_seconds=120,
     expected_manifest_hash=None,
-    source_cache_dirs=(), campaign_mode=None, work_namespace=None,
+    source_cache_dirs=(), campaign_mode=None, work_namespace=None, max_network_passes=None,
 ):
     """Keep a durable local ledger, schedule unseen work first, isolate FUSE and API work.
 
@@ -404,6 +406,8 @@ def run_crawling_pipeline(
                             if shutil.disk_usage(local_root).free < 2 * 1024**3:
                                 raise RuntimeError("Local spool has less than 2 GiB free; preserve pending uploads and free space safely")
                             attempt_clock = StageClock("cache_check_import")
+                            request_start = event_path.stat().st_size if event_path.exists() else 0
+                            prior_budget = index.result(aid)
                             local_paper = local_root / "raw" / to_dir_id(aid)
                             remote_paper = output_dir / to_dir_id(aid)
                             state.update(stage="check_cache", current_paper=aid,
@@ -422,32 +426,54 @@ def run_crawling_pipeline(
                                             if imported.get("imported"):
                                                 staged["record"] = imported["record"]
                                                 break
-                                    init_service()
-                                    if not metadata_prefetched:
-                                        attempt_clock.switch("metadata_batch_shared")
-                                        state.update(stage="metadata_batch", stage_deadline_epoch=time.time() + paper_seconds)
-                                        heartbeat(True)
-                                        papers.call({"action": "metadata_batch", "ids": due[position:]})
-                                        metadata_prefetched = True
-                                    attempt_clock.switch("s2_prefetch")
                                     local_record = staged.get("record", {})
-                                    ref_file = local_paper / "references.json"
-                                    cached_refs = (local_record.get("references_status", {}).get("success")
-                                                   and ref_file.is_file()
-                                                   and local_record.get("checksums", {}).get("references.json") == sha256_file(ref_file))
-                                    if not cached_refs:
-                                        papers.call({"action": "prefetch", "ids": due[position:position + 20]})
-                                    state.update(stage="paper", stage_deadline_epoch=time.time() + paper_seconds)
-                                    attempt_clock.switch("paper_worker")
-                                    heartbeat(True)
-                                    result = papers.call({"action": "paper", "arxiv_id": aid,
-                                                          "output": str(local_root / "raw"), "resume": resume})
+                                    spent = max_network_passes is not None and max(
+                                        prior_budget.get("bounded_network_passes", 0),
+                                        local_record.get("bounded_network_passes", 0)) >= max_network_passes
+                                    if spent:
+                                        # A restored portable ledger can lag the last
+                                        # durable commit. Do not buy another network
+                                        # pass merely because the VM was replaced.
+                                        result = {**local_record, "arxiv_id": aid, "success": False}
+                                    else:
+                                        init_service()
+                                        if not metadata_prefetched:
+                                            attempt_clock.switch("metadata_batch_shared")
+                                            state.update(stage="metadata_batch", stage_deadline_epoch=time.time() + paper_seconds)
+                                            heartbeat(True)
+                                            papers.call({"action": "metadata_batch", "ids": due[position:]})
+                                            metadata_prefetched = True
+                                        attempt_clock.switch("s2_prefetch")
+                                        ref_file = local_paper / "references.json"
+                                        cached_refs = (local_record.get("references_status", {}).get("success")
+                                                       and ref_file.is_file()
+                                                       and local_record.get("checksums", {}).get("references.json") == sha256_file(ref_file))
+                                        if not cached_refs:
+                                            papers.call({"action": "prefetch", "ids": due[position:position + 20]})
+                                        state.update(stage="paper", stage_deadline_epoch=time.time() + paper_seconds)
+                                        attempt_clock.switch("paper_worker")
+                                        heartbeat(True)
+                                        result = papers.call({"action": "paper", "arxiv_id": aid,
+                                                              "output": str(local_root / "raw"), "resume": resume})
                                     state.update(stage="commit", stage_deadline_epoch=time.time() + io_seconds)
                                     attempt_clock.switch("drive_commit")
                                     heartbeat(True)
+                                    if max_network_passes is not None:
+                                        durable_budget = {"bounded_network_passes": max(
+                                            prior_budget.get("bounded_network_passes", 0), result.get("bounded_network_passes", 0))}
+                                        counted, _ = bounded_result(durable_budget, {**result, "commit_state": "committed"},
+                                                                    max_network_passes,
+                                                                    http_activity=had_http_activity(event_path, request_start))
+                                        # Persist budget with the real transaction, so a VM
+                                        # restart cannot reset it to an old ledger snapshot.
+                                        result.update({k: v for k, v in counted.items() if k in {
+                                            "bounded_network_passes", "automatic_stop_reason"}})
                                     result = io.call({"action": "commit", "local": str(local_paper),
                                                       "remote": str(remote_paper), "record": result})
-                                index.update(aid, result, next_at=max(time.time() + 60, result.get("next_retry_epoch", 0)))
+                                budget_before = {"bounded_network_passes": max(
+                                    prior_budget.get("bounded_network_passes", 0), result.get("bounded_network_passes", 0))}
+                                result, disposition = bounded_result(budget_before, result, max_network_passes)
+                                index.update(aid, result, next_at=max(time.time() + 60, result.get("next_retry_epoch", 0)), state=disposition)
                                 cache_hits += int(result.get("cache_hit", False))
                                 consecutive_io_failures = 0
                             except (RuntimeError, TaskTimeout, OSError) as error:
@@ -455,7 +481,27 @@ def run_crawling_pipeline(
                                 result = {"arxiv_id": aid, "success": False, "commit_state": failure_state,
                                           "error": f"{type(error).__name__}: {error}",
                                           "local_staging": str(local_paper)}
-                                index.update(aid, result, time.time() + 120, state=failure_state)
+                                disposition = None
+                                if max_network_passes is not None and state.get("stage") == "paper":
+                                    # Preserve the interrupted partial publication before
+                                    # recording a bounded disposition. Never discard an
+                                    # upload failure or infer permanent absence from it.
+                                    partial = read_json(local_paper / "crawl_status.json", {})
+                                    partial.update(arxiv_id=aid, success=False, error=result["error"],
+                                                   local_staging=str(local_paper))
+                                    budget_before = {"bounded_network_passes": max(
+                                        prior_budget.get("bounded_network_passes", 0), partial.get("bounded_network_passes", 0))}
+                                    partial, disposition = bounded_result(budget_before, {**partial, "commit_state": "committed"},
+                                                                         max_network_passes, task_timeout=True)
+                                    try:
+                                        result = io.call({"action": "commit", "local": str(local_paper),
+                                                          "remote": str(remote_paper), "record": partial})
+                                    except (RuntimeError, TaskTimeout, OSError):
+                                        result.update(commit_state="upload_pending")
+                                        disposition = None
+                                        failure_state = "upload_pending"
+                                        consecutive_io_failures += 1
+                                index.update(aid, result, time.time() + 120, state=disposition or failure_state)
                                 if state.get("stage") in {"check_cache", "commit"}:
                                     consecutive_io_failures += 1
                             task_count += 1
@@ -482,7 +528,7 @@ def run_crawling_pipeline(
                                       f"last={aid}", flush=True)
                             if consecutive_io_failures >= 3:
                                 raise RuntimeError("Three consecutive Drive I/O failures; stop safely instead of spawning more retries")
-                        if index.stats()["success_count"] == len(ids):
+                        if index.stats()["pending_count"] == 0:
                             break
                     state["state"] = "completed" if index.stats()["success_count"] == len(ids) else "needs_recovery"
                 except KeyboardInterrupt:

@@ -241,6 +241,7 @@ class WorkIndex:
             "arxiv_id", "success", "source_success", "metadata_dates_complete", "references_status",
             "commit_state", "commit_id", "error", "next_retry_epoch", "elapsed_seconds",
             "total_initial_bytes", "total_stripped_bytes", "num_references", "local_staging",
+            "bounded_network_passes", "automatic_stop_reason",
         }}
         with self.db:
             self.db.execute("UPDATE work SET state=?, next_at=?, attempts=attempts+1, result=? WHERE id=?",
@@ -259,6 +260,9 @@ class WorkIndex:
                 "source_success_count": sum(bool(r.get("source_success")) for r in results),
                 "reference_success_count": sum(bool(r.get("references_status", {}).get("success")) for r in results),
                 "pending_count": sum(r[0] not in ("complete", "quarantined") for r in rows),
+                "quarantined_count": sum(r[0] == "quarantined" for r in rows),
+                "upload_pending_count": sum(r[0] == "upload_pending" for r in rows),
+                "uncommitted_attempt_count": sum(bool(r) and r.get("commit_state") != "committed" for r in results),
                 "legacy_pending_audit": sum(r[0] == "legacy_audit" for r in rows),
                 "failed_ids": [r.get("arxiv_id") for r in results if r and not r.get("success")]}
 
