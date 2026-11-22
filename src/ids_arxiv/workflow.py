@@ -61,6 +61,18 @@ def corpus_base(config):
     return output_root({**config, "runner_id": config.get("data_runner_id", owner)}, owner)
 
 
+def audit_ready_after_budget(summary):
+    """Require complete attempt coverage and no unsaved payload before audit."""
+    counters = ("selected_publications", "total_attempted", "pending_count",
+                "upload_pending_count", "uncommitted_attempt_count")
+    return (all(type(summary.get(key)) is int for key in counters)
+            and summary["selected_publications"] == 5000
+            and summary["total_attempted"] == 5000
+            and summary["pending_count"] > 0
+            and summary["upload_pending_count"] == 0
+            and summary["uncommitted_attempt_count"] == 0)
+
+
 def future_retry_cutoff(summary, now, limit=1800):
     """Stop waiting, not retry early or declare failures permanently absent.
 
@@ -211,9 +223,18 @@ def execute(config):
                     while time.time() < due and time.monotonic() < end:
                         time.sleep(min(1, max(.05, due-time.time())))
                 if summary.get("pending_count", 1) != 0 and not crawl_stop:
-                    state["state"] = "session_budget_reached"
-                    stage("needs_resume", summary={k: v for k, v in summary.items() if k != "failed_ids"})
-                    return summary
+                    if not audit_ready_after_budget(summary):
+                        state["state"] = "session_budget_reached"
+                        stage("needs_resume", summary={k: v for k, v in summary.items() if k != "failed_ids"})
+                        return summary
+                    crawl_stop = {"reason": "session_budget_reached_after_full_coverage",
+                                  "observed_at": utc_now(),
+                                  "selected_publications": summary["selected_publications"],
+                                  "total_attempted": summary["total_attempted"],
+                                  "pending_count": summary["pending_count"],
+                                  "note": "Finite session ended with durable full attempt coverage; remaining data requires audit/review, not success or verified absence."}
+                    io.call({"action": "write_json", "path": str(base / "crawl-stop.json"), "value": crawl_stop})
+                    stage("crawl_budget_cutoff", **crawl_stop)
                 stage("source_evidence")
                 collect_source_evidence(config, io, summary)
             stage("audit")
@@ -252,7 +273,7 @@ def active_local_jobs():
             args = process.info["cmdline"] or []
             if process.pid == os.getpid() or process.info["status"] in {psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD}:
                 continue
-            modern = ("ids_arxiv.workflow" in args or "ids_arxiv.team_run" in args) and "worker" in args
+            modern = any(module in args for module in ("ids_arxiv.workflow", "ids_arxiv.team_run", "ids_arxiv.repair")) and "worker" in args
             if modern or "ids_arxiv.finalize" in args or any(Path(arg).name in {"colab_autorun.py", "colab_campaign.py"} for arg in args):
                 owner = None
                 if "--config-json" in args:
@@ -260,7 +281,7 @@ def active_local_jobs():
                     targets = value.get("target_owner_ids", [])
                     owner = targets[0] if len(targets) == 1 else None
                 result.append({"pid": process.pid, "create_time": process.info["create_time"],
-                               "owner": owner, "workflow": "ids_arxiv.workflow" in args})
+                               "owner": owner, "workflow": any(m in args for m in ("ids_arxiv.workflow", "ids_arxiv.repair"))})
         except (psutil.Error, ValueError):
             continue
     return result
@@ -298,7 +319,7 @@ def status(config):
     owner = config["target_owner_ids"][0]
     record, health = current_worker_record(owner)
     def snapshot(selected):
-        with IsolatedService("ids_arxiv.io_worker", timeout=20) as io:
+        with IsolatedService("ids_arxiv.io_worker", timeout=60) as io:
             base = corpus_base({**config, "target_owner_ids": [selected], "data_runner_id": selected})
             try:
                 return selected, io.call({"action": "owner_snapshot", "base": str(base), "owner": selected,

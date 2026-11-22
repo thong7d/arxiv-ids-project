@@ -20,7 +20,7 @@ from .team_run import output_root, validate_config
 
 
 def finalize(config, stop_current=False, freeze_s2_404=False, extra_evidence=None, repair_pending=False,
-             resume=True):
+             resume=True, freeze_s2_rate_limited=False):
     config = validate_config(config)
     if len(config["target_owner_ids"]) != 1:
         raise ValueError("Audit one owner at a time")
@@ -87,6 +87,7 @@ def finalize(config, stop_current=False, freeze_s2_404=False, extra_evidence=Non
         context = {"owner": owner, "raw_path": str(destination / "raw"),
                    "manifest_sha256": provenance["manifest_sha256"], "protocol": PROTOCOL,
                    "proofs_sha256": digest(proofs), "freeze_s2_404": freeze_s2_404,
+                   "freeze_s2_rate_limited": freeze_s2_rate_limited,
                    "validator_sha256": digest({name: sha256_file(Path(__file__).with_name(name))
                                                for name in ("completion.py", "audit_service.py")})}
         journal = AuditJournal(io, destination / "audit-checkpoint", context, ids)
@@ -126,7 +127,8 @@ def finalize(config, stop_current=False, freeze_s2_404=False, extra_evidence=Non
             try:
                 if audit.process is None or audit.process.poll() is not None:
                     audit.call({"action": "init", "ids": ids, "raw": str(destination / "raw"),
-                                "proofs": proofs, "allow_s2_unavailable": freeze_s2_404})
+                                "proofs": proofs, "allow_s2_unavailable": freeze_s2_404,
+                                "allow_s2_rate_limited": freeze_s2_rate_limited})
                 return audit.call({"action": "assess", "arxiv_id": aid})
             except (OSError, RuntimeError, TimeoutError) as error:
                 return {"arxiv_id": aid, "classification": "pending", "data_download_success": False,
@@ -162,6 +164,7 @@ def finalize(config, stop_current=False, freeze_s2_404=False, extra_evidence=Non
                       discovery_manifest_sha256=provenance["manifest_sha256"],
                       source_sha256=os.getenv("IDS_SOURCE_SHA256"),
                       s2_404_freeze_authorized=freeze_s2_404,
+                      s2_rate_limited_freeze_authorized=freeze_s2_rate_limited,
                       academic_exception_approval_pending=bool(report["counts"].get("references_unavailable")),
                       state="stopped_with_documented_exceptions" if operational else "needs_repair")
         if repair_pending:
@@ -188,9 +191,10 @@ if __name__ == "__main__":
     parser.add_argument("--config-json", required=True)
     parser.add_argument("--stop-current", action="store_true")
     parser.add_argument("--freeze-s2-404", action="store_true")
+    parser.add_argument("--freeze-s2-rate-limited", action="store_true")
     parser.add_argument("--extra-evidence")
     parser.add_argument("--repair-pending", action="store_true")
     parser.add_argument("--fresh", action="store_true", help="Ignore cached audit assessments after external raw edits")
     args = parser.parse_args()
     finalize(json.loads(args.config_json), args.stop_current, args.freeze_s2_404, args.extra_evidence, args.repair_pending,
-             resume=not args.fresh)
+             resume=not args.fresh, freeze_s2_rate_limited=args.freeze_s2_rate_limited)

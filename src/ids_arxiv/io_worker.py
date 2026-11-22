@@ -61,7 +61,7 @@ def handle(request):
         remote, local = Path(request["remote"]), Path(request["local"])
         local.mkdir(parents=True, exist_ok=True)
         record = read_json(remote / "crawl_status.json", {})
-        if record.get("success") and verified_record(remote, record):
+        if not request.get("force_revalidate") and record.get("success") and verified_record(remote, record):
             return {"already_committed": True, "record": record}
         # Metadata/references are small. Only copy usable, inventoried versions,
         # and never copy a version already staged locally with matching bytes.

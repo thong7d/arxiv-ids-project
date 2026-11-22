@@ -26,12 +26,13 @@ class ColabApp:
     def __init__(self, config):
         self.config = config
 
-    def call(self, action, stage="auto", confirm_run_id=""):
+    def call(self, action, stage="auto", confirm_run_id="", module=None):
         bounded = self.config.get("workflow_mode") == "bounded" and action != "preflight"
-        module = "ids_arxiv.workflow" if bounded else "ids_arxiv.team_run"
-        command = [sys.executable, "-m", module, action, "--config-json", json.dumps(self.config),
-                   "--confirm-run-id", confirm_run_id]
-        if not bounded:
+        module = module or ("ids_arxiv.workflow" if bounded else "ids_arxiv.team_run")
+        command = [sys.executable, "-m", module, action, "--config-json", json.dumps(self.config)]
+        if module != "ids_arxiv.repair":
+            command.extend(["--confirm-run-id", confirm_run_id])
+        if not bounded and module == "ids_arxiv.team_run":
             command.extend(["--stage", stage])
         # CLI subprocesses are short-lived, detached from notebook Interrupt.
         # Long-lived crawler output goes to its local worker.log, never a PIPE.
@@ -130,6 +131,8 @@ class ColabApp:
             if record.get("run_id"):
                 print(f"  run_id: {record['run_id']}")
             crawl = record.get("crawl", {})
+            if record.get("stage") == "repair":
+                print(f"  Repair: {record.get('processed', 0)}/{record.get('planned', '?')} | bài: {record.get('current_paper', '—')} | tối đa một lượt bổ sung/bài")
             if record.get("stage") == "crawl" and crawl:
                 progress = crawl.get("summary", {})
                 print(f"  Khâu con: {crawl.get('stage', 'chuẩn bị')} | bài: {crawl.get('current_paper', '—')}")
@@ -146,7 +149,11 @@ class ColabApp:
             for owner, item in value["owners"].items():
                 closure = item.get("closure", {})
                 if closure.get("operational_closed") or closure.get("workflow_finished"):
-                    print(f"  {owner}: {'ĐÃ CHỐT VẬN HÀNH' if closure.get('operational_closed') else 'DỪNG, CẦN XEM NGOẠI LỆ'} | {closure.get('counts', {})}")
+                    is_repairing = (owner == value["selected_owner"] and record.get("stage") == "repair"
+                                    and health.get("health") in {"RUNNING", "WAITING"})
+                    status_label = ("ĐÃ CHỐT VẬN HÀNH" if closure.get("operational_closed")
+                                    else ("ĐANG REPAIR BỔ SUNG" if is_repairing else "DỪNG, CẦN XEM NGOẠI LỆ"))
+                    print(f"  {owner}: {status_label} | {closure.get('counts', {})}")
                     if closure.get("academic_exception_approval_pending"):
                         print("    Ngoại lệ S2 còn cần xác nhận học thuật; không phải 5000 lượt tải thành công.")
                 elif item.get("audit"):
@@ -207,7 +214,12 @@ def start(student_id, drive_root, **overrides):
         receipt.touch()
     print("Tests: đạt. Preflight:", app.call("preflight"))
     if app.config.get("workflow_mode") == "bounded":
-        print("Khởi chạy một dải: crawl hữu hạn → audit có resume → chốt ngoại lệ:", app.call("start"))
+        launched = app.call("start")
+        receipt = launched.get("receipt") or {}
+        if (launched.get("not_launched") and not receipt.get("operational_closed")
+                and int((receipt.get("counts") or {}).get("pending") or 0) > 0):
+            launched = app.call("start", module="ids_arxiv.repair")
+        print("Khởi chạy một dải: crawl hữu hạn → audit có resume → chốt ngoại lệ:", launched)
     else:
         print("Khởi chạy probe 5 bài → tự chuyển đủ dải khi probe đạt:", app.call("launch"))
     return app

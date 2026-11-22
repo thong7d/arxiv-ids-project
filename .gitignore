@@ -35,6 +35,7 @@ _build/
 .coverage
 htmlcov/
 .ruff_cache/
+media/
 
 # Environment variables & secrets
 .env

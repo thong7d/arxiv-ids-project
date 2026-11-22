@@ -79,8 +79,8 @@ def test_new_worker_receives_only_selected_owner(tmp_path, monkeypatch):
     assert captured[0]["target_owner_ids"] == ["23120345"]
 
 
-@pytest.mark.parametrize("has_prior_audit,cutoff", [(False, False), (True, False), (False, True)])
-def test_crawl_then_audit_stops_for_review_without_reopening(tmp_path, monkeypatch, has_prior_audit, cutoff):
+@pytest.mark.parametrize("has_prior_audit,cutoff,budget", [(False, False, False), (True, False, False), (False, True, False), (False, False, True)])
+def test_crawl_then_audit_stops_for_review_without_reopening(tmp_path, monkeypatch, has_prior_audit, cutoff, budget):
     import time
     from pathlib import Path
 
@@ -112,10 +112,13 @@ def test_crawl_then_audit_stops_for_review_without_reopening(tmp_path, monkeypat
     def crawl(manifest, destination, **kwargs):
         assert kwargs["student_id"] == "23120345" and kwargs["max_network_passes"] == 3
         phases.append("crawl")
-        return {"pending_count": int(cutoff), "failed_ids": ["2509.06047"],
+        if budget:
+            expired = time.monotonic() + 40000
+            monkeypatch.setattr(workflow.time, "monotonic", lambda: expired)
+        return {"pending_count": int(cutoff or budget), "failed_ids": ["2509.06047"],
                 "selected_publications": 5000, "total_attempted": 5000,
                 "upload_pending_count": 0, "uncommitted_attempt_count": 0,
-                "next_retry_epoch": time.time() + 86400}
+                "next_retry_epoch": time.time() + (10 if budget else 86400)}
     monkeypatch.setattr(workflow, "run_crawling_pipeline", crawl)
     monkeypatch.setattr(workflow, "collect_source_evidence", lambda *args: phases.append("evidence"))
     def audit(config, **kwargs):
@@ -132,6 +135,9 @@ def test_crawl_then_audit_stops_for_review_without_reopening(tmp_path, monkeypat
     if cutoff:
         assert report["crawl_stop"]["reason"] == "next_retry_beyond_wait_budget"
         assert any(path.endswith("crawl-stop.json") for path in writes)
+        assert receipt["crawl_stop"]["pending_count"] == 1
+    if budget:
+        assert report["crawl_stop"]["reason"] == "session_budget_reached_after_full_coverage"
         assert receipt["crawl_stop"]["pending_count"] == 1
 
 
@@ -150,6 +156,18 @@ def test_monitor_distinguishes_import_progress_from_full_success(tmp_path, monke
     assert "check_cache" in output and "2509.06376" in output
 
 
+def test_audit_budget_gate_requires_durable_full_coverage():
+    summary = {"selected_publications": 5000, "total_attempted": 5000,
+               "pending_count": 12, "upload_pending_count": 0, "uncommitted_attempt_count": 0}
+    assert workflow.audit_ready_after_budget(summary)
+    for key, value in (("total_attempted", 4999), ("selected_publications", 4999),
+                       ("upload_pending_count", 1), ("uncommitted_attempt_count", 1),
+                       ("pending_count", 0), ("total_attempted", True)):
+        assert not workflow.audit_ready_after_budget({**summary, key: value})
+    for key in summary:
+        assert not workflow.audit_ready_after_budget({k: v for k, v in summary.items() if k != key})
+
+
 def test_future_retry_cutoff_never_skips_unseen_or_uncommitted_data():
     summary = {"selected_publications": 5000, "total_attempted": 5000, "pending_count": 12,
                "upload_pending_count": 0, "uncommitted_attempt_count": 0, "next_retry_epoch": 90000}
@@ -162,3 +180,27 @@ def test_future_retry_cutoff_never_skips_unseen_or_uncommitted_data():
     unknown = {k: v for k, v in summary.items() if k != "uncommitted_attempt_count"}
     assert not workflow.future_retry_cutoff(unknown, now=100)
     assert not workflow.future_retry_cutoff({**summary, "pending_count": None}, now=100)
+
+
+def test_colab_start_auto_launches_repair_when_needs_repair(tmp_path, monkeypatch, capsys):
+    from ids_arxiv import colab_app
+
+    calls = []
+    monkeypatch.setattr(colab_app, "current_worker_record", lambda runner: ({}, {"health": "STOPPED"}))
+    monkeypatch.setattr(colab_app.Path, "exists", lambda self: True)
+
+    def fake_call(self, action, stage="auto", confirm_run_id="", module=None):
+        calls.append((action, module))
+        if action == "preflight":
+            return {"ok": True}
+        if action == "start" and module is None:
+            return {"not_launched": True, "owner": "23120358",
+                    "receipt": {"operational_closed": False, "counts": {"pending": 4346, "full_success": 644}}}
+        if action == "start" and module == "ids_arxiv.repair":
+            return {"launched": 999, "owner": "23120358", "workflow": "targeted_repair_then_audit"}
+        raise AssertionError((action, module))
+
+    monkeypatch.setattr(colab_app.ColabApp, "call", fake_call)
+    colab_app.start("23120358", tmp_path, workflow_mode="bounded")
+    assert calls == [("preflight", None), ("start", None), ("start", "ids_arxiv.repair")]
+    assert "targeted_repair_then_audit" in capsys.readouterr().out

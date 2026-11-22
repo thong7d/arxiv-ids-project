@@ -29,10 +29,11 @@ def main():
             candidates.extend(
                 p
                 for p in directory.rglob("*")
-                if p.is_file() and p.suffix in allowed and "__pycache__" not in p.parts
+                if p.is_file() and p.suffix in allowed
+                and not {"__pycache__", "_build", ".jupyter_cache", ".pytest_cache"}.intersection(p.parts)
             )
     candidates += [
-        root / name for name in ("pyproject.toml", "requirements.txt", "requirements-colab-m1.txt", "README.md", "PLAN.md")
+        root / name for name in ("pyproject.toml", "requirements.txt", "requirements-colab-m1.txt", "requirements-book.txt", "README.md", "PLAN.md")
     ]
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(set(candidates)):

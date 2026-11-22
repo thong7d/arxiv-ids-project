@@ -12,9 +12,10 @@ def notebook(sha):
 **Chỉ chọn MSSV ở cell 1 rồi Runtime → Run all.** Lần đầu Google vẫn có thể hỏi
 quyền Secrets/Drive; không thể bỏ qua các hộp cấp quyền này bằng mã.
 
-- Mỗi người dùng key S2 cá nhân, bật Notebook access cho hai Secrets và chỉ chạy
-  **một runtime cho MSSV của mình**. Ba người dùng cùng source và thư mục Drive.
-- Mặc định chỉ cào 5.000 ID của MSSV đã chọn; probe 5 bài tự chuyển sang full khi đạt.
+- Mỗi tài khoản dùng email/key S2 cá nhân trong Secrets. Chọn MSSV là chọn dải dữ liệu;
+  ai cũng có thể hỗ trợ dải của bạn khác, nhưng **mỗi dải chỉ một runtime** tại một thời điểm.
+- Mỗi phiên chỉ xử lý 5.000 ID đã chọn: tận dụng cache → crawl hữu hạn → audit có resume
+  → lưu ngoại lệ và dừng. Đổi MSSV trong cùng runtime sẽ dừng có kiểm soát phiên cũ.
 - Worker chạy nền, không bị dừng chỉ vì cell Monitor kết thúc; không dùng cell
   "giữ máy sống". Google vẫn có thể thu hồi runtime. Chạy lại để resume.
 - Bảng thời gian gồm cache/import, metadata, source, references, ngày references,
@@ -24,17 +25,25 @@ quyền Secrets/Drive; không thể bỏ qua các hộp cấp quyền này bằn
 - arXiv chia lượt UTC giữa ba MSSV để không cộng dồn quota. Chạy riêng muốn bỏ
   thời gian chờ phải xác nhận các crawler khác đã dừng qua script, không tự suy đoán.
 
-Notebook chỉ cào/hiển thị. Parser, matching, xuất bản và audit chạy bằng script Python.
+Notebook chỉ khởi chạy/hiển thị. Crawl, audit và checkpoint nằm trong script Python;
+parser, matching và xuất bản là công việc riêng sau M1. Ngoại lệ không được tính thành công.
 """
     setup = '''# @title 1. Chọn MSSV · Chuẩn bị Colab và mã nguồn
 STUDENT_ID = "23120364" # @param ["23120364", "23120358", "23120345"]
+IDS_SETUP_READY = False
 import os, sys, hashlib, zipfile, subprocess
 from pathlib import Path
 from google.colab import userdata, drive
 
 assert os.environ.get("COLAB_GPU", "0") in ("", "0"), "Chọn runtime CPU, không GPU."
 for name in ("ARXIV_CONTACT_EMAIL", "SEMANTIC_SCHOLAR_API_KEY"):
-    os.environ[name] = userdata.get(name)
+    try:
+        os.environ[name] = userdata.get(name)
+    except userdata.TimeoutException:
+        if not os.environ.get(name):
+            raise
+        print("MCP timeout: giữ Secret đã được nạp hợp lệ trong runtime:", name,
+              "| Nếu vừa đổi Secret, hãy chạy Setup từ giao diện Colab.")
 drive.mount("/content/drive")
 DRIVE_ROOT = Path("/content/drive/MyDrive/IDS_Nhom13_Corpus_Backup")
 assert DRIVE_ROOT.is_dir(), "Thêm shortcut thư mục Drive chung vào My Drive với đúng tên."
@@ -51,9 +60,12 @@ with zipfile.ZipFile(archive) as bundle:
 subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", str(CODE_ROOT/"requirements-colab-m1.txt")], check=True)
 os.environ["PYTHONPATH"] = str(CODE_ROOT/"src")
 os.environ["IDS_SOURCE_SHA256"] = SOURCE_SHA256
+os.environ["IDS_WORKFLOW_MODE"] = "bounded"
+IDS_SETUP_READY = True
 print("Sẵn sàng:", STUDENT_ID, "| source", SOURCE_SHA256[:12], "| không hiển thị Secrets")
 '''.replace("__SHA__", sha)
-    launch = '''# @title 2. Tự kiểm tra → probe 5 bài → cào đủ dải (chạy nền)
+    launch = '''# @title 2. Tự kiểm tra → cào hữu hạn → audit → chốt ngoại lệ (một MSSV)
+assert globals().get("IDS_SETUP_READY", False), "Setup chưa thành công; không dùng lại CODE_ROOT cũ."
 import importlib.util
 spec = importlib.util.spec_from_file_location("_ids13_colab_entry", CODE_ROOT/"scripts/colab_entry.py")
 entry = importlib.util.module_from_spec(spec)
@@ -85,4 +97,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
     # This script is a bulk notebook serialization/generation step.
     target = Path(__file__).resolve().parents[1] / "notebooks/IDS13_M1_Colab.ipynb"
-    target.write_text(json.dumps(notebook(args.sha), ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    value = notebook(args.sha)
+    if target.exists():
+        existing = json.loads(target.read_text(encoding="utf-8"))
+        # Preserve notebook identity and any user-added cells/metadata. Only
+        # update the four managed cells, without deleting unrelated user work.
+        for old, new in zip(existing["cells"][:4], value["cells"]):
+            old["source"] = new["source"]
+            if old["cell_type"] == "code":
+                old.update(outputs=[], execution_count=None)
+        value = existing
+    target.write_text(json.dumps(value, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")

@@ -4,7 +4,9 @@ author: "Phạm Minh Thông, Nguyễn Tiến Thành, Nguyễn Trịnh Quang"
 logo: ""
 
 execute:
-  execute_notebooks: "off"
+  execute_notebooks: "force"
+  timeout: 180
+  allow_errors: false
 
 html:
   use_issues_button: true

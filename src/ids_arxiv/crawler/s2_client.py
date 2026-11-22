@@ -28,6 +28,7 @@ class SemanticScholarClient:
                         if deferred else (PoliteRateLimiter(1.05) if self.api_key else s2_limiter))
         self.deferred = deferred
         self.events = events
+        self.key_429_streak = 0
         self.last_status = {"state": "pending", "success": False}
         self.last_all_references = []
         self.all_cache = {}
@@ -65,10 +66,16 @@ class SemanticScholarClient:
                 references, self.last_status = cached
                 self.last_all_references = cached_all if cached_all is not None else []
                 return references
-        if self.deferred and self.limiter.ready_in() > 0:
-            self.last_status = {"state": "deferred", "success": False,
-                                "next_retry_epoch": time.time() + self.limiter.ready_in()}
-            return {}
+        if self.deferred:
+            ready = self.limiter.ready_in()
+            wait_cap = float(os.getenv("IDS_S2_WAIT_CAP_SECONDS", "0") or 0)
+            if ready > 0:
+                if wait_cap > 0 and ready <= wait_cap:
+                    time.sleep(ready)
+                else:
+                    self.last_status = {"state": "deferred", "success": False,
+                                        "next_retry_epoch": time.time() + ready}
+                    return {}
         refs = {}
         self.last_all_references = []
         offset = 0
@@ -101,6 +108,7 @@ class SemanticScholarClient:
                 if int(next_offset) <= offset:
                     raise ValueError("Non-advancing Semantic Scholar pagination")
                 offset = int(next_offset)
+            self.key_429_streak = 0
             self.last_status = {
                 "state": "downloaded" if raw_count else "empty",
                 "success": True,
@@ -112,7 +120,14 @@ class SemanticScholarClient:
             }
         except RequestFailure as error:
             if self.deferred and error.status_code == 429:
-                self.limiter.defer(max(5 if self.api_key else 60, error.retry_after))
+                if self.api_key:
+                    self.key_429_streak += 1
+                    if self.key_429_streak >= 3:
+                        self.api_key = None
+                        self.session.headers.pop("x-api-key", None)
+                        self.limiter = SharedQuota(3.05, "s2", "anonymous")
+                if self.api_key or self.key_429_streak != 3:
+                    self.limiter.defer(max(5 if self.api_key else 60, error.retry_after))
             self.last_status = {
                 "state": "retryable_error"
                 if error.retryable

@@ -144,3 +144,21 @@ def test_proven_historical_404_survives_later_window_deferral(tmp_path):
     proof.update(source_failure_recorded="HTTP 404", source_url=f"https://export.arxiv.org/src/{AID}v2")
     atomic_json(root / "crawl_status.json", record)
     assert assess_publication(root, AID, {AID + "v2": proof})["classification"] == "verified_exception"
+
+
+def test_freeze_s2_rate_limited_requires_opt_in_and_full_arxiv_source(tmp_path):
+    root = tmp_path / "paper"
+    record, _ = publication(root)
+    record.update(success=False, attempt_count=17,
+                  references_status={"state": "deferred", "success": False, "http_status": None})
+    atomic_json(root / "crawl_status.json", record)
+    assert assess_publication(root, AID, allow_s2_unavailable=True)["classification"] == "pending"
+    result = assess_publication(root, AID, allow_s2_rate_limited=True)
+    assert result["classification"] == "references_unavailable" and not result["data_download_success"]
+    record["references_status"] = {"state": "retryable_error", "success": False, "http_status": 429}
+    atomic_json(root / "crawl_status.json", record)
+    assert assess_publication(root, AID, allow_s2_rate_limited=True)["classification"] == "references_unavailable"
+    # Incomplete source must remain pending even with allow_s2_rate_limited=True.
+    record["versions"][0]["files"] = {}
+    atomic_json(root / "crawl_status.json", record)
+    assert assess_publication(root, AID, allow_s2_rate_limited=True)["classification"] == "pending"

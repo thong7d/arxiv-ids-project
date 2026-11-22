@@ -16,7 +16,8 @@ def handle(request):
         if not ids or len(ids) != len(set(ids)):
             raise ValueError("Invalid audit manifest")
         context.update(ids=set(ids), raw=Path(request["raw"]), proofs=request["proofs"],
-                       allow_s2_unavailable=request.get("allow_s2_unavailable", False))
+                       allow_s2_unavailable=request.get("allow_s2_unavailable", False),
+                       allow_s2_rate_limited=request.get("allow_s2_rate_limited", False))
         return {"ready": True, "selected": len(ids)}
     aid = request["arxiv_id"]
     if aid not in context.get("ids", set()):
@@ -24,7 +25,10 @@ def handle(request):
     directory = context["raw"] / to_dir_id(aid)
     marker = directory / "crawl_status.json"
     before = sha256_file(marker) if marker.is_file() else None
-    result = assess_publication(directory, aid, context["proofs"], context["allow_s2_unavailable"])
+    result = assess_publication(
+        directory, aid, context["proofs"], context["allow_s2_unavailable"],
+        allow_s2_rate_limited=context.get("allow_s2_rate_limited", False),
+    )
     after = sha256_file(marker) if marker.is_file() else None
     if before != after:
         result.update(classification="pending", data_download_success=False,

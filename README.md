@@ -52,6 +52,11 @@ cp .env.example .env
 
 ## Chạy Colab và benchmark toàn bộ nhóm
 
+**Cập nhật 17/11:** [workflow một MSSV: crawl hữu hạn → audit → chốt ngoại lệ](docs/M1_ONE_OWNER_WORKFLOW.md).
+Mỗi runtime xử lý một dải; cùng một dải chỉ được giao cho một runtime. Dải đã chốt
+không tự cào lại. [Chuẩn bị báo cáo M1 từ audit/benchmark](docs/M1_REPORT_RUNBOOK.md)
+là tác vụ Python riêng; notebook vẫn chỉ khởi chạy/giám sát thu thập.
+
 Hướng dẫn hiện hành: [COLAB_RUNBOOK.md](docs/COLAB_RUNBOOK.md). Notebook: [IDS13_M1_Colab.ipynb](notebooks/IDS13_M1_Colab.ipynb).
 
 **Cập nhật 13/11:** xem [phục hồi M1 v3](docs/M1_RECOVERY_V3.md) trước khi chạy.

@@ -1,0 +1,7 @@
+# The existing _config.yml/_toc.yml use the Jupyter Book 1 (Sphinx) format.
+# Keep the reporting environment separate from the crawler/runtime environment.
+jupyter-book==1.0.4.post1
+ipykernel>=6.29,<7
+matplotlib>=3.8,<4
+pandas>=2.0,<4
+tabulate>=0.9,<1

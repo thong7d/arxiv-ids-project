@@ -42,7 +42,8 @@ def _withdrawn(evidence, aid, version):
     )
 
 
-def assess_publication(directory, aid, withdrawal_records=None, allow_s2_unavailable=False):
+def assess_publication(directory, aid, withdrawal_records=None, allow_s2_unavailable=False,
+                       allow_s2_rate_limited=False):
     """Verify local/readback bytes. Caller must impose a deadline for Drive I/O.
 
     Missing S2 references and their temporary errors remain pending. Only the
@@ -92,22 +93,34 @@ def assess_publication(directory, aid, withdrawal_records=None, allow_s2_unavail
                            and s2_evidence.get("url") == f"https://api.semanticscholar.org/graph/v1/paper/arXiv:{aid}/references"
                            and re.fullmatch(r"[0-9a-f]{64}", s2_evidence.get("response_sha256", ""))
                            and _date(s2_evidence["checked_at"]) and references == {} and all_references == [])
-        if not unavailable and (not ref_status.get("success") or not ref_status.get("dates_complete")
+        s2_rate_limited = bool(
+            allow_s2_rate_limited and not record.get("success")
+            and not ref_status.get("success")
+            and (
+                ref_status.get("state") == "deferred"
+                or (ref_status.get("state") == "retryable_error" and ref_status.get("http_status") == 429)
+            )
+            and int(record.get("attempt_count") or 0) >= 1
+            and references == {} and all_references == []
+        )
+        s2_missing_allowed = unavailable or s2_rate_limited
+        if not s2_missing_allowed and (not ref_status.get("success") or not ref_status.get("dates_complete")
                 or not ref_status.get("all_references_retained") or not isinstance(all_references, list)
                 or len(all_references) != ref_status.get("raw_count")
                 or not reference_snapshot_consistent(references, all_references)):
             raise ValueError("References/date retrieval incomplete; not a source-withdrawal exception")
-        if not isinstance(references, dict) or record.get("num_references", len(references)) != len(references):
-            raise ValueError("Reference count/shape mismatch")
-        if ref_status.get("arxiv_count", len(references)) != len(references):
-            raise ValueError("S2 arXiv reference count mismatch")
-        if ref_status.get("raw_count", len(references)) < len(references):
-            raise ValueError("S2 raw count smaller than retained references")
-        for reference in references.values():
-            ReferenceItem.model_validate(reference)
-            _date(reference["submission_date"])
-            if not reference.get("s2_id") or reference.get("date_source") not in {"arxiv_atom", "arxiv_atom_published"}:
-                raise ValueError("Unverified reference date or missing S2 ID")
+        if not s2_missing_allowed:
+            if not isinstance(references, dict) or record.get("num_references", len(references)) != len(references):
+                raise ValueError("Reference count/shape mismatch")
+            if ref_status.get("arxiv_count", len(references)) != len(references):
+                raise ValueError("S2 arXiv reference count mismatch")
+            if ref_status.get("raw_count", len(references)) < len(references):
+                raise ValueError("S2 raw count smaller than retained references")
+            for reference in references.values():
+                ReferenceItem.model_validate(reference)
+                _date(reference["submission_date"])
+                if not reference.get("s2_id") or reference.get("date_source") not in {"arxiv_atom", "arxiv_atom_published"}:
+                    raise ValueError("Unverified reference date or missing S2 ID")
         rows = record.get("versions", [])
         versions = {row["version"]: row for row in rows}
         if len(versions) != len(rows) or set(versions) != set(expected):
@@ -134,7 +147,7 @@ def assess_publication(directory, aid, withdrawal_records=None, allow_s2_unavail
                 raise ValueError(f"v{number}: source inventory mismatch")
             if any(p.is_file() and p.suffix.lower() not in {".tex", ".bib"} for p in target.rglob("*")):
                 raise ValueError(f"v{number}: forbidden binary/image file")
-        if unavailable:
+        if s2_missing_allowed:
             result["classification"] = "references_unavailable"
         elif result["withdrawn_versions"]:
             if record.get("success") or record.get("source_success"):
