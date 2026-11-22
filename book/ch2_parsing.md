@@ -13,10 +13,13 @@ Pipeline phân tích mã nguồn LaTeX chuyển đổi văn bản thô thành c�
    - Chuẩn hóa Inline Math về `$...$`.
    - Chuẩn hóa Block Math về `\begin{equation}...\end{equation}`.
    - Lọc bỏ các thẻ định dạng rác (`\centering`, `[htpb]`, `\midrule`).
-4. **Bóc tách BibTeX & Khử Trùng lặp:**
-   - Chuyển đổi `\bibitem` thành BibTeX.
-   - Khử trùng lặp trích dẫn (hợp nhất các trường, đồng bộ `\cite` key).
-   - Khử trùng lặp nội dung toàn văn giữa các phiên bản (`v1`, `v2`, ...).
+4. **Bóc tách BibTeX đa tầng & Khử Trùng lặp (Colab CPU-only):**
+   - **Tầng 1 (`.bib` gốc):** Bóc tách trực tiếp từ các tệp `.bib` trong thư mục phiên bản.
+   - **Tầng 2 (`\bibitem` & `.bbl`):** Chuyển đổi các khối `\begin{thebibliography}...\bibitem` trong `.tex` (và tệp `.bbl` nếu có) sang cấu trúc BibTeX chuẩn bằng Regex/Parser trên CPU.
+   - **Tầng 3 (References viết tay không dùng `\bibitem`/`.bib`):** Với các bài tác giả tự gõ mục tài liệu tham khảo thủ công (ví dụ `\section*{References}` kèm danh sách `\item` hoặc đoạn văn thường), parser áp dụng bộ quy tắc heuristic nhận diện vùng References cuối bài để tách từng mục trích dẫn và ghi nhận thống kê thực nghiệm vào báo cáo.
+   - **Khử trùng lặp 2 cấp độ:** Hợp nhất các citation key trùng lặp, đồng bộ lệnh `\cite{}` trong cây phân cấp, và khử trùng lặp nội dung toàn văn giữa các phiên bản (`v1`, `v2`, ...).
+5. **Bảo toàn bản ghi phiên bản rỗng (HTTP 404 & PDF-only):**
+   - Các phiên bản không có mã nguồn LaTeX (do lỗi `HTTP 404` trên `/src/<id>v<n>` hoặc bản nộp chỉ có PDF) vẫn được giữ nguyên khóa phiên bản với ánh xạ rỗng (`"2": {}`) trong `hierarchy.json` và ghi rõ trạng thái tại `version_states`, bảo đảm không làm mất dấu lịch sử phiên bản thực tế của bài báo.
 
 ---
 

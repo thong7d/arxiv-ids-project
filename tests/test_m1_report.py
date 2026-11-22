@@ -5,9 +5,13 @@ import pytest
 from ids_arxiv.m1_report import (
     audit_statistics,
     benchmark_statistics,
+    coverage_table,
+    interactive_checkpoint_timeline_html,
+    interactive_coverage_html,
     load_snapshot,
     make_snapshot,
     marker_statistics,
+    member_label,
 )
 from ids_arxiv.storage import atomic_json
 
@@ -124,3 +128,20 @@ def test_marker_statistics_match_size_cohorts_and_preserve_real_empty_references
     records["2508.17873"] = None
     value = marker_statistics(list(records), records)
     assert value["reference_metadata_success_rate"] is None and value["missing_or_incompatible_markers"] == 1
+
+
+def test_public_report_hides_student_id_and_renders_interactive_widgets():
+    value = make_snapshot({"23120364": ["2508.17872", "2508.17873"]}, "real-manifest",
+                          {"23120364": {"audit": audited()}})
+    assert member_label("23120364", hide_student_id=True) == "Phạm Minh Thông (Dải 1)"
+    assert "23120364" in member_label("23120364", hide_student_id=False)
+    df = coverage_table(value, hide_student_id=True)
+    assert df.index.name == "Thành viên"
+    assert df.index[0] == "Phạm Minh Thông (Dải 1)"
+    assert "23120364" not in df.index[0]
+    cov_html = interactive_coverage_html(value, hide_student_id=True)
+    assert "ids13-m1-interactive" in cov_html and "Phạm Minh Thông (Dải 1)" in cov_html
+    assert "23120364" not in cov_html
+    timeline_html = interactive_checkpoint_timeline_html()
+    assert "ids13-timeline-widget" in timeline_html and "m1-team-v4" in timeline_html
+

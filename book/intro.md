@@ -7,11 +7,11 @@
 
 ## 1. Giới thiệu Nhóm và Phạm vi Dữ liệu
 
-| Thành viên | MSSV | Vai trò chính | Dải arXiv ID phân công |
+| Thành viên | Phân nhóm | Vai trò chính | Dải arXiv ID phân công |
 |:---|:---:|:---|:---|
-| **Phạm Minh Thông** | 23120364 | Trưởng nhóm, Crawler, Kiến trúc hệ thống | `2508.17872` → `2509.01046` |
-| **Nguyễn Tiến Thành** | 23120358 | Parser, Chuẩn hóa, Khử trùng lặp | `2509.01047` → `2509.06046` |
-| **Nguyễn Trịnh Quang** | 23120345 | Gán nhãn, Trích đặc trưng, Mô hình ML | `2509.06047` → `2509.11046` |
+| **Phạm Minh Thông** | Dải 1 | Trưởng nhóm, Crawler, Kiến trúc hệ thống | `2508.17872` → `2509.01046` (5.000 ID) |
+| **Nguyễn Tiến Thành** | Dải 2 | Parser, Chuẩn hóa, Khử trùng lặp | `2509.01047` → `2509.06046` (5.000 ID) |
+| **Nguyễn Trịnh Quang** | Dải 3 | Gán nhãn, Trích đặc trưng, Mô hình ML | `2509.06047` → `2509.11046` (5.000 ID) |
 
 ---
 

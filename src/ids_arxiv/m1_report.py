@@ -11,6 +11,15 @@ from ids_arxiv.storage import utc_now
 
 CLASSES = ("full_success", "verified_exception", "references_unavailable", "pending")
 OWNERS = ("23120364", "23120358", "23120345")
+MEMBER_LABELS = {
+    "23120364": "Phạm Minh Thông (Dải 1)",
+    "23120358": "Nguyễn Tiến Thành (Dải 2)",
+    "23120345": "Nguyễn Trịnh Quang (Dải 3)",
+}
+
+
+def member_label(owner, hide_student_id=True):
+    return MEMBER_LABELS.get(str(owner), str(owner)) if hide_student_id else str(owner)
 
 
 def fingerprint(value):
@@ -227,24 +236,25 @@ def load_snapshot(path):
     return value
 
 
-def coverage_table(snapshot):
+def coverage_table(snapshot, hide_student_id=True):
     import pandas as pd
     rows = []
+    index_col = "Thành viên" if hide_student_id else "MSSV"
     for owner, item in snapshot["owners"].items():
         counts = item["counts"]
-        rows.append({"MSSV": owner, "Được giao": item["expected_count"],
+        rows.append({index_col: member_label(owner, hide_student_id), "Được giao": item["expected_count"],
                      "Đạt sau audit": counts.get("full_success", 0),
                      "Ngoại lệ source": counts.get("verified_exception", 0),
                      "Thiếu S2": counts.get("references_unavailable", 0),
                      "Cần xem xét": counts.get("pending", 0),
                      "Chưa audit": item["unassessed_count"],
                      "Tỉ lệ tải đạt (%)": item["success_rate"] * 100 if item["success_rate"] is not None else None})
-    return pd.DataFrame(rows).set_index("MSSV")
+    return pd.DataFrame(rows).set_index(index_col)
 
 
-def coverage_figure(snapshot):
+def coverage_figure(snapshot, hide_student_id=True):
     import matplotlib.pyplot as plt
-    table = coverage_table(snapshot)
+    table = coverage_table(snapshot, hide_student_id=hide_student_id)
     columns = ["Đạt sau audit", "Ngoại lệ source", "Thiếu S2", "Cần xem xét", "Chưa audit"]
     ax = table[columns].plot.barh(stacked=True, figsize=(10, 4),
                                 color=["#238b45", "#fdae6b", "#756bb1", "#de2d26", "#d9d9d9"])
@@ -253,3 +263,180 @@ def coverage_figure(snapshot):
     ax.legend(loc="upper center", bbox_to_anchor=(.5, -.23), ncol=3)
     plt.tight_layout()
     return ax.figure
+
+
+def interactive_coverage_html(snapshot, hide_student_id=True):
+    """Self-contained interactive HTML/JS coverage dashboard for Jupyter Book (hover + filters)."""
+    import html
+    records = []
+    for owner, item in snapshot["owners"].items():
+        counts = item.get("counts", {})
+        expected = int(item.get("expected_count") or 5000)
+        stats = item.get("corpus_statistics") or {}
+        label = member_label(owner, hide_student_id)
+        records.append({
+            "id": label,
+            "label": label,
+            "expected": expected,
+            "full_success": int(counts.get("full_success", 0)),
+            "verified_exception": int(counts.get("verified_exception", 0)),
+            "references_unavailable": int(counts.get("references_unavailable", 0)),
+            "pending": int(counts.get("pending", 0)),
+            "unassessed": int(item.get("unassessed_count", 0)),
+            "audited_at": item.get("audited_at") or "Chưa audit",
+            "operational_closed": bool(item.get("operational_closed")),
+            "mean_before_kb": round(stats["mean_before_uncompressed_bytes"] / 1024, 1)
+            if isinstance(stats.get("mean_before_uncompressed_bytes"), (int, float)) else None,
+            "mean_after_kb": round(stats["mean_after_tex_bib_bytes"] / 1024, 1)
+            if isinstance(stats.get("mean_after_tex_bib_bytes"), (int, float)) else None,
+            "mean_refs": round(stats["mean_all_references"], 1)
+            if isinstance(stats.get("mean_all_references"), (int, float)) else None,
+        })
+    data_json = json.dumps(records, ensure_ascii=False)
+    gen_at = html.escape(str(snapshot.get("generated_at", "")))
+    return f"""
+<div id="ids13-m1-interactive" style="font-family:system-ui,-apple-system,sans-serif;border:1px solid #d0d7de;border-radius:8px;padding:16px;margin:14px 0;background:#ffffff;">
+  <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;">
+    <div>
+      <strong style="font-size:15px;">Biểu đồ tương tác Coverage & Kiểm định M1</strong>
+      <div style="font-size:12px;color:#57606a;">Di chuột (hover) vào từng phân đoạn để xem chi tiết · Snapshot: <code>{gen_at}</code></div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;font-size:13px;">
+      <label for="ids13-member-filter">Thành viên:</label>
+      <select id="ids13-member-filter" style="padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;">
+        <option value="ALL">Tất cả (15.000 ID)</option>
+      </select>
+      <label for="ids13-unit-mode">Đơn vị:</label>
+      <select id="ids13-unit-mode" style="padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;">
+        <option value="count">Số lượng bài (ID)</option>
+        <option value="pct">Tỉ lệ (%)</option>
+      </select>
+    </div>
+  </div>
+  <div id="ids13-bars-container"></div>
+  <div id="ids13-tooltip" style="margin-top:10px;padding:8px 12px;border-radius:6px;background:#f6f8fa;border:1px solid #d0d7de;font-size:13px;min-height:22px;color:#24292f;">
+    Di chuột vào thanh biểu đồ phía trên để xem số liệu chi tiết từng hạng mục.
+  </div>
+</div>
+<script>
+(function() {{
+  const data = {data_json};
+  const cats = [
+    {{key: "full_success", name: "Đạt sau audit (full_success)", color: "#238b45"}},
+    {{key: "verified_exception", name: "Ngoại lệ rút bài (verified_exception)", color: "#fdae6b"}},
+    {{key: "references_unavailable", name: "Đủ nguồn arXiv · Thiếu S2 (references_unavailable)", color: "#756bb1"}},
+    {{key: "pending", name: "Đang chờ / Cần repair (pending)", color: "#de2d26"}},
+    {{key: "unassessed", name: "Chưa audit", color: "#d9d9d9"}}
+  ];
+  const selMember = document.getElementById("ids13-member-filter");
+  const selUnit = document.getElementById("ids13-unit-mode");
+  const container = document.getElementById("ids13-bars-container");
+  const tooltip = document.getElementById("ids13-tooltip");
+  data.forEach(r => {{
+    const opt = document.createElement("option");
+    opt.value = r.id;
+    opt.textContent = r.label;
+    selMember.appendChild(opt);
+  }});
+  function render() {{
+    const filter = selMember.value;
+    const mode = selUnit.value;
+    container.innerHTML = "";
+    const rows = filter === "ALL" ? data : data.filter(r => r.id === filter);
+    rows.forEach(r => {{
+      const wrap = document.createElement("div");
+      wrap.style.marginBottom = "12px";
+      const srcCount = r.full_success + r.references_unavailable;
+      const srcPct = ((srcCount / r.expected) * 100).toFixed(2);
+      const header = document.createElement("div");
+      header.style.cssText = "display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;";
+      header.innerHTML = "<span><strong>" + r.label + "</strong> (" + (r.operational_closed ? "Đã chốt vận hành" : "Đang cập nhật") + ")</span>" +
+        "<span style='color:#57606a;'>Đủ nguồn arXiv: <strong>" + srcCount + "/" + r.expected + " (" + srcPct + "%)</strong> · Đạt toàn phần: <strong>" + r.full_success + "</strong></span>";
+      wrap.appendChild(header);
+      const bar = document.createElement("div");
+      bar.style.cssText = "display:flex;height:26px;border-radius:5px;overflow:hidden;background:#eaeef2;border:1px solid #d0d7de;";
+      cats.forEach(c => {{
+        const val = r[c.key] || 0;
+        if (val <= 0) return;
+        const pct = (val / r.expected) * 100;
+        const seg = document.createElement("div");
+        seg.style.cssText = "width:" + pct + "%;background:" + c.color + ";cursor:pointer;transition:opacity 0.15s;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:600;overflow:hidden;white-space:nowrap;";
+        if (pct > 7) {{
+          seg.textContent = mode === "pct" ? pct.toFixed(1) + "%" : val;
+        }}
+        seg.addEventListener("mouseenter", () => {{
+          seg.style.opacity = "0.85";
+          let extra = "";
+          if (r.mean_before_kb !== null && r.mean_after_kb !== null) {{
+            extra += " · Size TB trước/sau lọc: " + r.mean_before_kb + " KB → " + r.mean_after_kb + " KB";
+          }}
+          if (r.mean_refs !== null) {{
+            extra += " · Refs S2 TB: " + r.mean_refs;
+          }}
+          tooltip.innerHTML = "<strong>" + r.label + "</strong> — <span style='color:" + c.color + ";font-weight:600;'>" + c.name + "</span>: <strong>" +
+            val + " / " + r.expected + " ID (" + pct.toFixed(2) + "%)</strong> · Audit lúc: <code>" + r.audited_at + "</code>" + extra;
+        }});
+        seg.addEventListener("mouseleave", () => {{ seg.style.opacity = "1"; }});
+        bar.appendChild(seg);
+      }});
+      wrap.appendChild(bar);
+      container.appendChild(wrap);
+    }});
+  }}
+  selMember.addEventListener("change", render);
+  selUnit.addEventListener("change", render);
+  render();
+}})();
+</script>
+"""
+
+
+def interactive_checkpoint_timeline_html():
+    """Self-contained interactive version and checkpoint timeline for Chapter 1."""
+    milestones = [
+        {"ver": "v1–v2", "date": "02/11/2026", "dir": "Early Discovery", "title": "Khảo sát API & Phát hiện giới hạn offset 10.000",
+         "detail": "arXiv Atom API trả HTTP 500 tại offset 10.000. Nhóm giữ nguyên log v2 để đối soát và thiết kế lại thuật toán chia shard theo tuần ở v3."},
+        {"ver": "v3 (Protocol 3)", "date": "13/11 – 16/11/2026", "dir": "m1-pilot-v3/ & m1-final-v3/", "title": "Manifest 15.000 ID & Pilot Gate 30 bài",
+         "detail": "Xác minh manifest 15.000 ID (SHA-256: 721cab05206f...), vượt qua Pilot Gate 30 bài và chạy thu thập đợt chính trên Google Colab CPU."},
+        {"ver": "v4 (Protocol 4)", "date": "17/11 – 20/11/2026", "dir": "m1-team-v4/ (bundle 6ca65d5e → 9b4cfdb0)", "title": "Kiến trúc Bounded Workflow & Audit độc lập",
+         "detail": "Nâng lên schema_version 4: tách io_worker/audit_service, lưu đủ references_all.json và provenance ngày nộp. Chốt xong Dải 1 (4.959 full_success, 37 verified_exception, 4 references_unavailable; 99,26% đủ nguồn TeX/Bib)."},
+        {"ver": "v4.1–v4.2", "date": "21/11/2026", "dir": "m1-team-v4/ (bundle 6ae98018 → 8924fa53)", "title": "Targeted Repair, S2 Wait-Cap & Xác minh rút bài Dải 3",
+         "detail": "Thử nghiệm có kiểm soát 3 giờ thu hồi +264 bài S2, khôi phục 25/25 ngày arXiv Atom và xác minh 32/32 chứng từ rút bài trên Dải 3 (đạt 4.989/5.000 = 99,78% bài hoàn tất 100% nguồn TeX/Bib)."},
+        {"ver": "v4.3 (Hiện hành)", "date": "22/11/2026", "dir": "m1-team-v4/ (bundle a170ab88)", "title": "Hợp nhất Notebook Auto-Repair & Chạy bù Dải 2 + Dải 3",
+         "detail": "Tự động chuyển tiếp workflow → repair trên cùng 1 notebook IDS13_M1_Colab.ipynb, chờ cooldown S2 tới 125s và fallback khi key bị 429. Đang chạy bù nguồn cho Dải 2 và references S2 cho Dải 3."}
+    ]
+    items_json = json.dumps(milestones, ensure_ascii=False)
+    return f"""
+<div id="ids13-timeline-widget" style="font-family:system-ui,-apple-system,sans-serif;border:1px solid #d0d7de;border-radius:8px;padding:16px;margin:14px 0;background:#ffffff;">
+  <div style="font-weight:600;font-size:15px;margin-bottom:8px;">Tiến trình Phiên bản & Các mốc Checkpoint (点击 / Click vào từng mốc để xem chi tiết)</div>
+  <div id="ids13-tl-buttons" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;"></div>
+  <div id="ids13-tl-box" style="padding:12px;border-radius:6px;background:#f6f8fa;border-left:4px solid #0969da;font-size:13px;line-height:1.5;"></div>
+</div>
+<script>
+(function() {{
+  const steps = {items_json};
+  const btnWrap = document.getElementById("ids13-tl-buttons");
+  const box = document.getElementById("ids13-tl-box");
+  function selectStep(idx) {{
+    Array.from(btnWrap.children).forEach((b, i) => {{
+      b.style.background = i === idx ? "#0969da" : "#f6f8fa";
+      b.style.color = i === idx ? "#ffffff" : "#24292f";
+      b.style.borderColor = i === idx ? "#0969da" : "#d0d7de";
+    }});
+    const s = steps[idx];
+    box.innerHTML = "<div><strong>" + s.ver + "</strong> · <code>" + s.date + "</code> · Thư mục/Gói: <code>" + s.dir + "</code></div>" +
+      "<div style='margin-top:4px;font-weight:600;color:#0969da;'>" + s.title + "</div>" +
+      "<div style='margin-top:4px;color:#24292f;'>" + s.detail + "</div>";
+  }}
+  steps.forEach((s, idx) => {{
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = s.ver + " (" + s.date.split(" ")[0] + ")";
+    btn.style.cssText = "padding:6px 12px;border:1px solid #d0d7de;border-radius:16px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.15s;";
+    btn.addEventListener("click", () => selectStep(idx));
+    btnWrap.appendChild(btn);
+  }});
+  selectStep(steps.length - 1);
+}})();
+</script>
+"""

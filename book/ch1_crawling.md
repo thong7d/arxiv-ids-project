@@ -33,7 +33,14 @@ project = next((p for p in [Path.cwd(), *Path.cwd().parents]
                 if (p / "src/ids_arxiv/m1_report.py").is_file()), None)
 if project is not None:
     sys.path.insert(0, str(project / "src"))
-from ids_arxiv.m1_report import load_snapshot, coverage_table, coverage_figure
+from ids_arxiv.m1_report import (
+    load_snapshot,
+    coverage_table,
+    coverage_figure,
+    interactive_coverage_html,
+    interactive_checkpoint_timeline_html,
+    member_label,
+)
 
 default_path = project / "artifacts/m1-report/snapshot.json" if project else Path("m1-report-snapshot.json")
 snapshot_path = Path(os.environ.get("IDS_M1_REPORT_SNAPSHOT", str(default_path)))
@@ -106,9 +113,10 @@ Monitor và không thay số liệu thiếu bằng dữ liệu mẫu.
 :tags: [hide-input]
 
 if snapshot is not None:
-    table = coverage_table(snapshot)
+    display(HTML(interactive_coverage_html(snapshot, hide_student_id=True)))
+    table = coverage_table(snapshot, hide_student_id=True)
     display(HTML(table.astype(object).where(table.notna(), "N/A").to_html(border=0)))
-    display(coverage_figure(snapshot))
+    display(coverage_figure(snapshot, hide_student_id=True))
     import matplotlib.pyplot as plt
     plt.close("all")
 ```
@@ -131,14 +139,15 @@ if snapshot is not None:
     rows = []
     for owner, item in snapshot["owners"].items():
         stats = item.get("corpus_statistics") or {}
-        rows.append({"MSSV": owner, "Marker đã đọc": stats.get("observed_committed_markers"),
+        rows.append({"Thành viên": member_label(owner, hide_student_id=True),
+                     "Marker đã đọc": stats.get("observed_committed_markers"),
                      "Bài cùng cohort size": stats.get("paired_size_papers"),
                      "Byte TB trước lọc": stats.get("mean_before_uncompressed_bytes"),
                      "Byte TB TeX/Bib sau lọc": stats.get("mean_after_tex_bib_bytes"),
                      "Bài có số refs": stats.get("all_reference_count_papers"),
                      "Refs TB (toàn bộ S2)": stats.get("mean_all_references"),
                      "Refs arXiv TB": stats.get("mean_arxiv_references")})
-    sizes = pd.DataFrame(rows).set_index("MSSV")
+    sizes = pd.DataFrame(rows).set_index("Thành viên")
     display(HTML(sizes.astype(object).where(sizes.notna(), "N/A").to_html(border=0)))
 ```
 
@@ -161,13 +170,14 @@ if snapshot is not None:
     rows = []
     for owner, item in snapshot["owners"].items():
         measured = item["benchmark"]
-        rows.append({"MSSV": owner, "Phiên kết thúc": measured["completed_sessions"],
+        rows.append({"Thành viên": member_label(owner, hide_student_id=True),
+                     "Phiên kết thúc": measured["completed_sessions"],
                      "Worker giây": measured.get("measured_worker_seconds"),
                      "ID có log": measured.get("coverage_count"),
                      "RAM TB worker (byte)": measured.get("average_process_tree_rss_bytes"),
                      "Peak một worker (byte)": measured.get("peak_single_worker_rss_bytes"),
                      "End-to-end hệ thống": measured.get("end_to_end_seconds")})
-    performance = pd.DataFrame(rows).set_index("MSSV")
+    performance = pd.DataFrame(rows).set_index("Thành viên")
     display(HTML(performance.astype(object).where(performance.notna(), "N/A").to_html(border=0)))
 ```
 
@@ -227,6 +237,27 @@ Quét log đầy đủ khi crawler đã checkpoint để không tranh I/O Drive.
 
 Kết quả gắn manifest/audit/source SHA và timestamp. Báo cáo nêu coverage chưa đủ,
 ngoại lệ S2 và phép đo chưa có, không dùng tests xanh làm bằng chứng hoàn tất
-15.000 bài. Book vẫn chờ chốt các dải và kiểm chứng benchmark. Vị trí host Book
-riêng cần được nhóm đối chiếu yêu cầu nộp; phiên chuẩn bị này không đổi URL,
-không publish và không tự tạo repository.
+15.000 bài. Mã nguồn (`github.com/thong7d/arxiv-ids-project`) và trang báo cáo
+Jupyter Book (`thong7d.github.io/arxiv-ids-project/`) được biên dịch và phát hành
+từ cùng một repository chung của nhóm theo quy định đồ án.
+
+## 1.8. Lịch sử phiên bản, các mốc Checkpoint & Quyết định thiết kế
+
+```{code-cell} python3
+:tags: [hide-input]
+
+display(HTML(interactive_checkpoint_timeline_html()))
+```
+
+### Các quyết định thiết kế kỹ thuật trọng tâm
+
+1. **Thư mục dữ liệu chuẩn duy nhất (`m1-team-v4`):**
+   - `m1-pilot-v3/` lưu dấu vết vượt cổng pilot 30 bài ban đầu.
+   - `m1-final-v3/` chứa bảng phân công gốc đã xác minh (`m1-final-v3/manifests/papers.parquet`, 15.000 ID) và kho cache `.tex`/`.bib` từ Protocol 3 (chỉ dùng để tái sử dụng nội dung file nguồn đã tải, không phải đầu ra cuối).
+   - **`m1-team-v4/<owner>/main/full/<owner>/` là thư mục kết quả chính thức duy nhất của M1 (Protocol 4)** cho cả 3 dải ID (`15.000` bài báo), chứa đầy đủ `raw/`, `audit-result.json`, `closure.json`, `closure-evidence.json`, `exceptions.json`, `repair-history/` và `benchmark/`.
+2. **Tổ chức `references.json` ở cấp bài báo kèm ngày phiên bản trong `metadata.json`:**
+   - Do Semantic Scholar Graph API trả về danh sách trích dẫn cho toàn bộ bài báo (`arXiv:<id>`) mà không phân tách theo từng bản sửa `v1, v2, ...`, nhóm lưu một snapshot trích dẫn chung (`references_all.json` và bản lọc arXiv `references.json`, trường `references_scope: "publication_snapshot_shared_across_versions"`) cùng danh sách `version_dates` / `version_metadata` của từng phiên bản trong `metadata.json`.
+3. **Xử lý các phiên bản `/src/<id>v<n>` trả lỗi HTTP 404 và bài chỉ có PDF:**
+   - Khi metadata ghi nhận phiên bản `vN` nhưng endpoint `export.arxiv.org/src/<id>v<N>` trả `HTTP 404` (tác giả rút bài hoặc ẩn mã nguồn), hệ thống ghi nhận trạng thái `state: "not_found", error: "HTTP 404", files: {}` trong `crawl_status.json`, xác minh chéo trang `arxiv.org/abs/<id>v<N>` vào `closure-evidence.json`, và **giữ nguyên bản ghi phiên bản rỗng** (tương tự `pdf_only`) xuyên suốt sang `hierarchy.json` của M2 thay vì xóa bỏ phiên bản đó.
+4. **Xử lý ngoại lệ Semantic Scholar (HTTP 404 & Rate Limit 429):**
+   - Các bài đã hoàn tất 100% mã nguồn `.tex`/`.bib` và metadata từ arXiv nhưng Semantic Scholar trả `HTTP 404` (chưa lập chỉ mục) hoặc bị giới hạn tốc độ sau các đợt repair có kiểm soát được ghi nhận minh bạch vào `exceptions.json` và `repair-history/http-events-*.jsonl`, không tự ý lấy `.bib` điền giả làm kết quả trả về của API S2 ở M1.

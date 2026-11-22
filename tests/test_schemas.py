@@ -65,6 +65,24 @@ def test_hierarchy_schema_empty_versions():
         HierarchyData.model_validate({"elements": {}, "hierarchy": {}})
 
 
+def test_hierarchy_schema_preserves_empty_version_records_for_404_and_pdf_only():
+    data = {
+        "elements": {"elem-1": "Section 1"},
+        "hierarchy": {
+            "1": {"elem-1": "doc-root"},
+            "2": {},
+        },
+        "version_states": {
+            "1": "downloaded",
+            "2": "not_found_404",
+        },
+    }
+    h = HierarchyData.model_validate(data)
+    assert h.hierarchy["2"] == {}
+    assert h.version_states == {"1": "downloaded", "2": "not_found_404"}
+
+
+
 def test_pyarrow_schemas_exist():
     assert set(TABLE_SCHEMAS) == {"papers", "references", "elements", "hierarchy", "bibtex", "predictions"}
     for name, schema in TABLE_SCHEMAS.items():
