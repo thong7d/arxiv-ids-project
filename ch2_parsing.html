@@ -442,11 +442,17 @@
 <li><p>Lọc bỏ các thẻ định dạng rác (<code class="docutils literal notranslate"><span class="pre">\centering</span></code>, <code class="docutils literal notranslate"><span class="pre">[htpb]</span></code>, <code class="docutils literal notranslate"><span class="pre">\midrule</span></code>).</p></li>
 </ul>
 </li>
-<li><p><strong>Bóc tách BibTeX &amp; Khử Trùng lặp:</strong></p>
+<li><p><strong>Bóc tách BibTeX đa tầng &amp; Khử Trùng lặp (Colab CPU-only):</strong></p>
 <ul class="simple">
-<li><p>Chuyển đổi <code class="docutils literal notranslate"><span class="pre">\bibitem</span></code> thành BibTeX.</p></li>
-<li><p>Khử trùng lặp trích dẫn (hợp nhất các trường, đồng bộ <code class="docutils literal notranslate"><span class="pre">\cite</span></code> key).</p></li>
-<li><p>Khử trùng lặp nội dung toàn văn giữa các phiên bản (<code class="docutils literal notranslate"><span class="pre">v1</span></code>, <code class="docutils literal notranslate"><span class="pre">v2</span></code>, …).</p></li>
+<li><p><strong>Tầng 1 (<code class="docutils literal notranslate"><span class="pre">.bib</span></code> gốc):</strong> Bóc tách trực tiếp từ các tệp <code class="docutils literal notranslate"><span class="pre">.bib</span></code> trong thư mục phiên bản.</p></li>
+<li><p><strong>Tầng 2 (<code class="docutils literal notranslate"><span class="pre">\bibitem</span></code> &amp; <code class="docutils literal notranslate"><span class="pre">.bbl</span></code>):</strong> Chuyển đổi các khối <code class="docutils literal notranslate"><span class="pre">\begin{thebibliography}...\bibitem</span></code> trong <code class="docutils literal notranslate"><span class="pre">.tex</span></code> (và tệp <code class="docutils literal notranslate"><span class="pre">.bbl</span></code> nếu có) sang cấu trúc BibTeX chuẩn bằng Regex/Parser trên CPU.</p></li>
+<li><p><strong>Tầng 3 (References viết tay không dùng <code class="docutils literal notranslate"><span class="pre">\bibitem</span></code>/<code class="docutils literal notranslate"><span class="pre">.bib</span></code>):</strong> Với các bài tác giả tự gõ mục tài liệu tham khảo thủ công (ví dụ <code class="docutils literal notranslate"><span class="pre">\section*{References}</span></code> kèm danh sách <code class="docutils literal notranslate"><span class="pre">\item</span></code> hoặc đoạn văn thường), parser áp dụng bộ quy tắc heuristic nhận diện vùng References cuối bài để tách từng mục trích dẫn và ghi nhận thống kê thực nghiệm vào báo cáo.</p></li>
+<li><p><strong>Khử trùng lặp 2 cấp độ:</strong> Hợp nhất các citation key trùng lặp, đồng bộ lệnh <code class="docutils literal notranslate"><span class="pre">\cite{}</span></code> trong cây phân cấp, và khử trùng lặp nội dung toàn văn giữa các phiên bản (<code class="docutils literal notranslate"><span class="pre">v1</span></code>, <code class="docutils literal notranslate"><span class="pre">v2</span></code>, …).</p></li>
+</ul>
+</li>
+<li><p><strong>Bảo toàn bản ghi phiên bản rỗng (HTTP 404 &amp; PDF-only):</strong></p>
+<ul class="simple">
+<li><p>Các phiên bản không có mã nguồn LaTeX (do lỗi <code class="docutils literal notranslate"><span class="pre">HTTP</span> <span class="pre">404</span></code> trên <code class="docutils literal notranslate"><span class="pre">/src/&lt;id&gt;v&lt;n&gt;</span></code> hoặc bản nộp chỉ có PDF) vẫn được giữ nguyên khóa phiên bản với ánh xạ rỗng (<code class="docutils literal notranslate"><span class="pre">&quot;2&quot;:</span> <span class="pre">{}</span></code>) trong <code class="docutils literal notranslate"><span class="pre">hierarchy.json</span></code> và ghi rõ trạng thái tại <code class="docutils literal notranslate"><span class="pre">version_states</span></code>, bảo đảm không làm mất dấu lịch sử phiên bản thực tế của bài báo.</p></li>
 </ul>
 </li>
 </ol>

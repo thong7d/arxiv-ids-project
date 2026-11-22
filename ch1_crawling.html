@@ -418,6 +418,10 @@
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#benchmark-va-pham-vi-do">1.5. Benchmark và phạm vi đo</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#thu-nghiem-s2-co-kiem-soat">1.6. Thử nghiệm S2 có kiểm soát</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tai-lap-va-gioi-han">1.7. Tái lập và giới hạn</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#lich-su-phien-ban-cac-moc-checkpoint-quyet-dinh-thiet-ke">1.8. Lịch sử phiên bản, các mốc Checkpoint &amp; Quyết định thiết kế</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cac-quyet-dinh-thiet-ke-ky-thuat-trong-tam">Các quyết định thiết kế kỹ thuật trọng tâm</a></li>
+</ul>
+</li>
 </ul>
             </nav>
         </div>
@@ -455,7 +459,14 @@ mẫu số. Nguồn: <a class="reference external" href="https://hcmus-cs-ta.git
                 <span class="k">if</span> <span class="p">(</span><span class="n">p</span> <span class="o">/</span> <span class="s2">"src/ids_arxiv/m1_report.py"</span><span class="p">)</span><span class="o">.</span><span class="n">is_file</span><span class="p">()),</span> <span class="kc">None</span><span class="p">)</span>
 <span class="k">if</span> <span class="n">project</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">sys</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">project</span> <span class="o">/</span> <span class="s2">"src"</span><span class="p">))</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">ids_arxiv.m1_report</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_snapshot</span><span class="p">,</span> <span class="n">coverage_table</span><span class="p">,</span> <span class="n">coverage_figure</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ids_arxiv.m1_report</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">load_snapshot</span><span class="p">,</span>
+    <span class="n">coverage_table</span><span class="p">,</span>
+    <span class="n">coverage_figure</span><span class="p">,</span>
+    <span class="n">interactive_coverage_html</span><span class="p">,</span>
+    <span class="n">interactive_checkpoint_timeline_html</span><span class="p">,</span>
+    <span class="n">member_label</span><span class="p">,</span>
+<span class="p">)</span>
 
 <span class="n">default_path</span> <span class="o">=</span> <span class="n">project</span> <span class="o">/</span> <span class="s2">"artifacts/m1-report/snapshot.json"</span> <span class="k">if</span> <span class="n">project</span> <span class="k">else</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"m1-report-snapshot.json"</span><span class="p">)</span>
 <span class="n">snapshot_path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"IDS_M1_REPORT_SNAPSHOT"</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">default_path</span><span class="p">)))</span>
@@ -558,9 +569,10 @@ Monitor và không thay số liệu thiếu bằng dữ liệu mẫu.</p>
 </summary>
 <div class="cell_input docutils container">
 <div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="k">if</span> <span class="n">snapshot</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">table</span> <span class="o">=</span> <span class="n">coverage_table</span><span class="p">(</span><span class="n">snapshot</span><span class="p">)</span>
+    <span class="n">display</span><span class="p">(</span><span class="n">HTML</span><span class="p">(</span><span class="n">interactive_coverage_html</span><span class="p">(</span><span class="n">snapshot</span><span class="p">,</span> <span class="n">hide_student_id</span><span class="o">=</span><span class="kc">True</span><span class="p">)))</span>
+    <span class="n">table</span> <span class="o">=</span> <span class="n">coverage_table</span><span class="p">(</span><span class="n">snapshot</span><span class="p">,</span> <span class="n">hide_student_id</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
     <span class="n">display</span><span class="p">(</span><span class="n">HTML</span><span class="p">(</span><span class="n">table</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">object</span><span class="p">)</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">table</span><span class="o">.</span><span class="n">notna</span><span class="p">(),</span> <span class="s2">"N/A"</span><span class="p">)</span><span class="o">.</span><span class="n">to_html</span><span class="p">(</span><span class="n">border</span><span class="o">=</span><span class="mi">0</span><span class="p">)))</span>
-    <span class="n">display</span><span class="p">(</span><span class="n">coverage_figure</span><span class="p">(</span><span class="n">snapshot</span><span class="p">))</span>
+    <span class="n">display</span><span class="p">(</span><span class="n">coverage_figure</span><span class="p">(</span><span class="n">snapshot</span><span class="p">,</span> <span class="n">hide_student_id</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
     <span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
     <span class="n">plt</span><span class="o">.</span><span class="n">close</span><span class="p">(</span><span class="s2">"all"</span><span class="p">)</span>
 </pre></div>
@@ -588,14 +600,15 @@ các snapshot S2 thành công, gồm cả trường hợp rỗng hợp lệ; m�
     <span class="n">rows</span> <span class="o">=</span> <span class="p">[]</span>
     <span class="k">for</span> <span class="n">owner</span><span class="p">,</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">snapshot</span><span class="p">[</span><span class="s2">"owners"</span><span class="p">]</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
         <span class="n">stats</span> <span class="o">=</span> <span class="n">item</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"corpus_statistics"</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{}</span>
-        <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">"MSSV"</span><span class="p">:</span> <span class="n">owner</span><span class="p">,</span> <span class="s2">"Marker đã đọc"</span><span class="p">:</span> <span class="n">stats</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"observed_committed_markers"</span><span class="p">),</span>
+        <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">"Thành viên"</span><span class="p">:</span> <span class="n">member_label</span><span class="p">(</span><span class="n">owner</span><span class="p">,</span> <span class="n">hide_student_id</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
+                     <span class="s2">"Marker đã đọc"</span><span class="p">:</span> <span class="n">stats</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"observed_committed_markers"</span><span class="p">),</span>
                      <span class="s2">"Bài cùng cohort size"</span><span class="p">:</span> <span class="n">stats</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"paired_size_papers"</span><span class="p">),</span>
                      <span class="s2">"Byte TB trước lọc"</span><span class="p">:</span> <span class="n">stats</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"mean_before_uncompressed_bytes"</span><span class="p">),</span>
                      <span class="s2">"Byte TB TeX/Bib sau lọc"</span><span class="p">:</span> <span class="n">stats</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"mean_after_tex_bib_bytes"</span><span class="p">),</span>
                      <span class="s2">"Bài có số refs"</span><span class="p">:</span> <span class="n">stats</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"all_reference_count_papers"</span><span class="p">),</span>
                      <span class="s2">"Refs TB (toàn bộ S2)"</span><span class="p">:</span> <span class="n">stats</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"mean_all_references"</span><span class="p">),</span>
                      <span class="s2">"Refs arXiv TB"</span><span class="p">:</span> <span class="n">stats</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"mean_arxiv_references"</span><span class="p">)})</span>
-    <span class="n">sizes</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">rows</span><span class="p">)</span><span class="o">.</span><span class="n">set_index</span><span class="p">(</span><span class="s2">"MSSV"</span><span class="p">)</span>
+    <span class="n">sizes</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">rows</span><span class="p">)</span><span class="o">.</span><span class="n">set_index</span><span class="p">(</span><span class="s2">"Thành viên"</span><span class="p">)</span>
     <span class="n">display</span><span class="p">(</span><span class="n">HTML</span><span class="p">(</span><span class="n">sizes</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">object</span><span class="p">)</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">sizes</span><span class="o">.</span><span class="n">notna</span><span class="p">(),</span> <span class="s2">"N/A"</span><span class="p">)</span><span class="o">.</span><span class="n">to_html</span><span class="p">(</span><span class="n">border</span><span class="o">=</span><span class="mi">0</span><span class="p">)))</span>
 </pre></div>
 </div>
@@ -625,13 +638,14 @@ song rồi gọi đó là wall-clock toàn hệ thống.</p>
     <span class="n">rows</span> <span class="o">=</span> <span class="p">[]</span>
     <span class="k">for</span> <span class="n">owner</span><span class="p">,</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">snapshot</span><span class="p">[</span><span class="s2">"owners"</span><span class="p">]</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
         <span class="n">measured</span> <span class="o">=</span> <span class="n">item</span><span class="p">[</span><span class="s2">"benchmark"</span><span class="p">]</span>
-        <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">"MSSV"</span><span class="p">:</span> <span class="n">owner</span><span class="p">,</span> <span class="s2">"Phiên kết thúc"</span><span class="p">:</span> <span class="n">measured</span><span class="p">[</span><span class="s2">"completed_sessions"</span><span class="p">],</span>
+        <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">"Thành viên"</span><span class="p">:</span> <span class="n">member_label</span><span class="p">(</span><span class="n">owner</span><span class="p">,</span> <span class="n">hide_student_id</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
+                     <span class="s2">"Phiên kết thúc"</span><span class="p">:</span> <span class="n">measured</span><span class="p">[</span><span class="s2">"completed_sessions"</span><span class="p">],</span>
                      <span class="s2">"Worker giây"</span><span class="p">:</span> <span class="n">measured</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"measured_worker_seconds"</span><span class="p">),</span>
                      <span class="s2">"ID có log"</span><span class="p">:</span> <span class="n">measured</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"coverage_count"</span><span class="p">),</span>
                      <span class="s2">"RAM TB worker (byte)"</span><span class="p">:</span> <span class="n">measured</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"average_process_tree_rss_bytes"</span><span class="p">),</span>
                      <span class="s2">"Peak một worker (byte)"</span><span class="p">:</span> <span class="n">measured</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"peak_single_worker_rss_bytes"</span><span class="p">),</span>
                      <span class="s2">"End-to-end hệ thống"</span><span class="p">:</span> <span class="n">measured</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"end_to_end_seconds"</span><span class="p">)})</span>
-    <span class="n">performance</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">rows</span><span class="p">)</span><span class="o">.</span><span class="n">set_index</span><span class="p">(</span><span class="s2">"MSSV"</span><span class="p">)</span>
+    <span class="n">performance</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">rows</span><span class="p">)</span><span class="o">.</span><span class="n">set_index</span><span class="p">(</span><span class="s2">"Thành viên"</span><span class="p">)</span>
     <span class="n">display</span><span class="p">(</span><span class="n">HTML</span><span class="p">(</span><span class="n">performance</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">object</span><span class="p">)</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">performance</span><span class="o">.</span><span class="n">notna</span><span class="p">(),</span> <span class="s2">"N/A"</span><span class="p">)</span><span class="o">.</span><span class="n">to_html</span><span class="p">(</span><span class="n">border</span><span class="o">=</span><span class="mi">0</span><span class="p">)))</span>
 </pre></div>
 </div>
@@ -701,9 +715,87 @@ Quét log đầy đủ khi crawler đã checkpoint để không tranh I/O Drive.
 <code class="docutils literal notranslate"><span class="pre">docs/M1_REPORT_RUNBOOK.md</span></code> trong code repository.</p>
 <p>Kết quả gắn manifest/audit/source SHA và timestamp. Báo cáo nêu coverage chưa đủ,
 ngoại lệ S2 và phép đo chưa có, không dùng tests xanh làm bằng chứng hoàn tất
-15.000 bài. Book vẫn chờ chốt các dải và kiểm chứng benchmark. Vị trí host Book
-riêng cần được nhóm đối chiếu yêu cầu nộp; phiên chuẩn bị này không đổi URL,
-không publish và không tự tạo repository.</p>
+15.000 bài. Mã nguồn (<code class="docutils literal notranslate"><span class="pre">github.com/thong7d/arxiv-ids-project</span></code>) và trang báo cáo
+Jupyter Book (<code class="docutils literal notranslate"><span class="pre">thong7d.github.io/arxiv-ids-project/</span></code>) được biên dịch và phát hành
+từ cùng một repository chung của nhóm theo quy định đồ án.</p>
+</section>
+<section id="lich-su-phien-ban-cac-moc-checkpoint-quyet-dinh-thiet-ke">
+<h2>1.8. Lịch sử phiên bản, các mốc Checkpoint &amp; Quyết định thiết kế<a class="headerlink" href="#lich-su-phien-ban-cac-moc-checkpoint-quyet-dinh-thiet-ke" title="Link to this heading">#</a></h2>
+<div class="cell tag_hide-input docutils container">
+<details class="admonition hide above-input">
+<summary aria-label="Toggle hidden content">
+<p class="collapsed admonition-title">Show code cell source</p>
+<p class="expanded admonition-title">Hide code cell source</p>
+</summary>
+<div class="cell_input docutils container">
+<div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">display</span><span class="p">(</span><span class="n">HTML</span><span class="p">(</span><span class="n">interactive_checkpoint_timeline_html</span><span class="p">()))</span>
+</pre></div>
+</div>
+</div>
+</details>
+<div class="cell_output docutils container">
+<div class="output text_html">
+<div id="ids13-timeline-widget" style="font-family:system-ui,-apple-system,sans-serif;border:1px solid #d0d7de;border-radius:8px;padding:16px;margin:14px 0;background:#ffffff;">
+  <div style="font-weight:600;font-size:15px;margin-bottom:8px;">Tiến trình Phiên bản & Các mốc Checkpoint (点击 / Click vào từng mốc để xem chi tiết)</div>
+  <div id="ids13-tl-buttons" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;"></div>
+  <div id="ids13-tl-box" style="padding:12px;border-radius:6px;background:#f6f8fa;border-left:4px solid #0969da;font-size:13px;line-height:1.5;"></div>
+</div>
+<script>
+(function() {
+  const steps = [{"ver": "v1–v2", "date": "02/11/2026", "dir": "Early Discovery", "title": "Khảo sát API & Phát hiện giới hạn offset 10.000", "detail": "arXiv Atom API trả HTTP 500 tại offset 10.000. Nhóm giữ nguyên log v2 để đối soát và thiết kế lại thuật toán chia shard theo tuần ở v3."}, {"ver": "v3 (Protocol 3)", "date": "13/11 – 16/11/2026", "dir": "m1-pilot-v3/ & m1-final-v3/", "title": "Manifest 15.000 ID & Pilot Gate 30 bài", "detail": "Xác minh manifest 15.000 ID (SHA-256: 721cab05206f...), vượt qua Pilot Gate 30 bài và chạy thu thập đợt chính trên Google Colab CPU."}, {"ver": "v4 (Protocol 4)", "date": "17/11 – 20/11/2026", "dir": "m1-team-v4/ (bundle 6ca65d5e → 9b4cfdb0)", "title": "Kiến trúc Bounded Workflow & Audit độc lập", "detail": "Nâng lên schema_version 4: tách io_worker/audit_service, lưu đủ references_all.json và provenance ngày nộp. Chốt xong Dải 1 (4.959 full_success, 37 verified_exception, 4 references_unavailable; 99,26% đủ nguồn TeX/Bib)."}, {"ver": "v4.1–v4.2", "date": "21/11/2026", "dir": "m1-team-v4/ (bundle 6ae98018 → 8924fa53)", "title": "Targeted Repair, S2 Wait-Cap & Xác minh rút bài Dải 3", "detail": "Thử nghiệm có kiểm soát 3 giờ thu hồi +264 bài S2, khôi phục 25/25 ngày arXiv Atom và xác minh 32/32 chứng từ rút bài trên Dải 3 (đạt 4.989/5.000 = 99,78% bài hoàn tất 100% nguồn TeX/Bib)."}, {"ver": "v4.3 (Hiện hành)", "date": "22/11/2026", "dir": "m1-team-v4/ (bundle a170ab88)", "title": "Hợp nhất Notebook Auto-Repair & Chạy bù Dải 2 + Dải 3", "detail": "Tự động chuyển tiếp workflow → repair trên cùng 1 notebook IDS13_M1_Colab.ipynb, chờ cooldown S2 tới 125s và fallback khi key bị 429. Đang chạy bù nguồn cho Dải 2 và references S2 cho Dải 3."}];
+  const btnWrap = document.getElementById("ids13-tl-buttons");
+  const box = document.getElementById("ids13-tl-box");
+  function selectStep(idx) {
+    Array.from(btnWrap.children).forEach((b, i) => {
+      b.style.background = i === idx ? "#0969da" : "#f6f8fa";
+      b.style.color = i === idx ? "#ffffff" : "#24292f";
+      b.style.borderColor = i === idx ? "#0969da" : "#d0d7de";
+    });
+    const s = steps[idx];
+    box.innerHTML = "<div><strong>" + s.ver + "</strong> · <code>" + s.date + "</code> · Thư mục/Gói: <code>" + s.dir + "</code></div>" +
+      "<div style='margin-top:4px;font-weight:600;color:#0969da;'>" + s.title + "</div>" +
+      "<div style='margin-top:4px;color:#24292f;'>" + s.detail + "</div>";
+  }
+  steps.forEach((s, idx) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = s.ver + " (" + s.date.split(" ")[0] + ")";
+    btn.style.cssText = "padding:6px 12px;border:1px solid #d0d7de;border-radius:16px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.15s;";
+    btn.addEventListener("click", () => selectStep(idx));
+    btnWrap.appendChild(btn);
+  });
+  selectStep(steps.length - 1);
+})();
+</script>
+</div></div>
+</div>
+<section id="cac-quyet-dinh-thiet-ke-ky-thuat-trong-tam">
+<h3>Các quyết định thiết kế kỹ thuật trọng tâm<a class="headerlink" href="#cac-quyet-dinh-thiet-ke-ky-thuat-trong-tam" title="Link to this heading">#</a></h3>
+<ol class="arabic simple">
+<li><p><strong>Thư mục dữ liệu chuẩn duy nhất (<code class="docutils literal notranslate"><span class="pre">m1-team-v4</span></code>):</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">m1-pilot-v3/</span></code> lưu dấu vết vượt cổng pilot 30 bài ban đầu.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">m1-final-v3/</span></code> chứa bảng phân công gốc đã xác minh (<code class="docutils literal notranslate"><span class="pre">m1-final-v3/manifests/papers.parquet</span></code>, 15.000 ID) và kho cache <code class="docutils literal notranslate"><span class="pre">.tex</span></code>/<code class="docutils literal notranslate"><span class="pre">.bib</span></code> từ Protocol 3 (chỉ dùng để tái sử dụng nội dung file nguồn đã tải, không phải đầu ra cuối).</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">m1-team-v4/&lt;owner&gt;/main/full/&lt;owner&gt;/</span></code> là thư mục kết quả chính thức duy nhất của M1 (Protocol 4)</strong> cho cả 3 dải ID (<code class="docutils literal notranslate"><span class="pre">15.000</span></code> bài báo), chứa đầy đủ <code class="docutils literal notranslate"><span class="pre">raw/</span></code>, <code class="docutils literal notranslate"><span class="pre">audit-result.json</span></code>, <code class="docutils literal notranslate"><span class="pre">closure.json</span></code>, <code class="docutils literal notranslate"><span class="pre">closure-evidence.json</span></code>, <code class="docutils literal notranslate"><span class="pre">exceptions.json</span></code>, <code class="docutils literal notranslate"><span class="pre">repair-history/</span></code> và <code class="docutils literal notranslate"><span class="pre">benchmark/</span></code>.</p></li>
+</ul>
+</li>
+<li><p><strong>Tổ chức <code class="docutils literal notranslate"><span class="pre">references.json</span></code> ở cấp bài báo kèm ngày phiên bản trong <code class="docutils literal notranslate"><span class="pre">metadata.json</span></code>:</strong></p>
+<ul class="simple">
+<li><p>Do Semantic Scholar Graph API trả về danh sách trích dẫn cho toàn bộ bài báo (<code class="docutils literal notranslate"><span class="pre">arXiv:&lt;id&gt;</span></code>) mà không phân tách theo từng bản sửa <code class="docutils literal notranslate"><span class="pre">v1,</span> <span class="pre">v2,</span> <span class="pre">...</span></code>, nhóm lưu một snapshot trích dẫn chung (<code class="docutils literal notranslate"><span class="pre">references_all.json</span></code> và bản lọc arXiv <code class="docutils literal notranslate"><span class="pre">references.json</span></code>, trường <code class="docutils literal notranslate"><span class="pre">references_scope:</span> <span class="pre">&quot;publication_snapshot_shared_across_versions&quot;</span></code>) cùng danh sách <code class="docutils literal notranslate"><span class="pre">version_dates</span></code> / <code class="docutils literal notranslate"><span class="pre">version_metadata</span></code> của từng phiên bản trong <code class="docutils literal notranslate"><span class="pre">metadata.json</span></code>.</p></li>
+</ul>
+</li>
+<li><p><strong>Xử lý các phiên bản <code class="docutils literal notranslate"><span class="pre">/src/&lt;id&gt;v&lt;n&gt;</span></code> trả lỗi HTTP 404 và bài chỉ có PDF:</strong></p>
+<ul class="simple">
+<li><p>Khi metadata ghi nhận phiên bản <code class="docutils literal notranslate"><span class="pre">vN</span></code> nhưng endpoint <code class="docutils literal notranslate"><span class="pre">export.arxiv.org/src/&lt;id&gt;v&lt;N&gt;</span></code> trả <code class="docutils literal notranslate"><span class="pre">HTTP</span> <span class="pre">404</span></code> (tác giả rút bài hoặc ẩn mã nguồn), hệ thống ghi nhận trạng thái <code class="docutils literal notranslate"><span class="pre">state:</span> <span class="pre">&quot;not_found&quot;,</span> <span class="pre">error:</span> <span class="pre">&quot;HTTP</span> <span class="pre">404&quot;,</span> <span class="pre">files:</span> <span class="pre">{}</span></code> trong <code class="docutils literal notranslate"><span class="pre">crawl_status.json</span></code>, xác minh chéo trang <code class="docutils literal notranslate"><span class="pre">arxiv.org/abs/&lt;id&gt;v&lt;N&gt;</span></code> vào <code class="docutils literal notranslate"><span class="pre">closure-evidence.json</span></code>, và <strong>giữ nguyên bản ghi phiên bản rỗng</strong> (tương tự <code class="docutils literal notranslate"><span class="pre">pdf_only</span></code>) xuyên suốt sang <code class="docutils literal notranslate"><span class="pre">hierarchy.json</span></code> của M2 thay vì xóa bỏ phiên bản đó.</p></li>
+</ul>
+</li>
+<li><p><strong>Xử lý ngoại lệ Semantic Scholar (HTTP 404 &amp; Rate Limit 429):</strong></p>
+<ul class="simple">
+<li><p>Các bài đã hoàn tất 100% mã nguồn <code class="docutils literal notranslate"><span class="pre">.tex</span></code>/<code class="docutils literal notranslate"><span class="pre">.bib</span></code> và metadata từ arXiv nhưng Semantic Scholar trả <code class="docutils literal notranslate"><span class="pre">HTTP</span> <span class="pre">404</span></code> (chưa lập chỉ mục) hoặc bị giới hạn tốc độ sau các đợt repair có kiểm soát được ghi nhận minh bạch vào <code class="docutils literal notranslate"><span class="pre">exceptions.json</span></code> và <code class="docutils literal notranslate"><span class="pre">repair-history/http-events-*.jsonl</span></code>, không tự ý lấy <code class="docutils literal notranslate"><span class="pre">.bib</span></code> điền giả làm kết quả trả về của API S2 ở M1.</p></li>
+</ul>
+</li>
+</ol>
+</section>
 </section>
 </section>
 
@@ -783,6 +875,10 @@ không publish và không tự tạo repository.</p>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#benchmark-va-pham-vi-do">1.5. Benchmark và phạm vi đo</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#thu-nghiem-s2-co-kiem-soat">1.6. Thử nghiệm S2 có kiểm soát</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tai-lap-va-gioi-han">1.7. Tái lập và giới hạn</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#lich-su-phien-ban-cac-moc-checkpoint-quyet-dinh-thiet-ke">1.8. Lịch sử phiên bản, các mốc Checkpoint &amp; Quyết định thiết kế</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cac-quyet-dinh-thiet-ke-ky-thuat-trong-tam">Các quyết định thiết kế kỹ thuật trọng tâm</a></li>
+</ul>
+</li>
 </ul>
   </nav></div>
 
