@@ -48,6 +48,7 @@ def test_stale_tampered_or_wrong_owner_is_rejected():
 
 def test_prepare_changes_only_staged_copy(tmp_path):
     import json
+
     from ids_arxiv.repair import prepare_local
     local = tmp_path/"local"
     remote = tmp_path/"remote"
@@ -65,10 +66,12 @@ def test_prepare_changes_only_staged_copy(tmp_path):
 
 def test_repair_reserves_before_network_commits_then_audits(tmp_path, monkeypatch):
     import json
+
     import pandas as pd
-    from ids_arxiv import repair, isolation, finalize, network_schedule
+
+    from ids_arxiv import finalize, isolation, network_schedule, repair
     from ids_arxiv.storage import sha256_file
-    from ids_arxiv.workflow import workflow_config, corpus_base
+    from ids_arxiv.workflow import corpus_base, workflow_config
     owner = "23120345"
     config = workflow_config(owner, tmp_path)
     base = corpus_base(config)
@@ -142,6 +145,7 @@ def test_repair_reserves_before_network_commits_then_audits(tmp_path, monkeypatc
 
 def test_s2_wait_cap_sleeps_short_cooldown_and_defers_long_cooldown(monkeypatch):
     from unittest.mock import Mock
+
     from ids_arxiv.crawler.s2_client import SemanticScholarClient
 
     slept = []

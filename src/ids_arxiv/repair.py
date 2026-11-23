@@ -244,7 +244,13 @@ def execute(config):
 
 
 def start(config):
-    from .runtime import current_worker_record, launch_detached, local_lock, runtime_id, stop_owned_worker
+    from .runtime import (
+        current_worker_record,
+        launch_detached,
+        local_lock,
+        runtime_id,
+        stop_owned_worker,
+    )
     from .team_run import environment
     from .workflow import active_local_jobs, validate_workflow
     config = validate_workflow(config)
@@ -268,6 +274,7 @@ def start(config):
 
 if __name__ == "__main__":
     import argparse
+
     from .workflow import validate_workflow
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=["start", "worker"])

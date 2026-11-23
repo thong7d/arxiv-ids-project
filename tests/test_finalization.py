@@ -32,9 +32,12 @@ def test_run_all_does_not_reopen_frozen_corpus(monkeypatch, tmp_path, capsys):
 
 
 def test_finalize_freeze_s2_rate_limited_closes_operationally(monkeypatch, tmp_path):
-    import pandas as pd
     from pathlib import Path
-    from ids_arxiv import audit_service, finalize as fin
+
+    import pandas as pd
+
+    from ids_arxiv import audit_service
+    from ids_arxiv import finalize as fin
     from ids_arxiv.checkpoint import SOURCE_POLICY
     from ids_arxiv.storage import atomic_json, file_inventory, sha256_file
 
