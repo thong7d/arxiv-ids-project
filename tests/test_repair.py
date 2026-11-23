@@ -164,3 +164,85 @@ def test_s2_wait_cap_sleeps_short_cooldown_and_defers_long_cooldown(monkeypatch)
     assert client.get_paper_references("2509.06048") == {}
     assert slept == [] and client.last_status["state"] == "deferred"
 
+
+def test_repair_handles_missing_commit_marker_and_rejects_external_change(tmp_path, monkeypatch):
+    import json
+    import shutil
+    from pathlib import Path
+
+    import pandas as pd
+
+    from ids_arxiv import finalize, isolation, network_schedule, repair
+    from ids_arxiv.storage import sha256_file
+    from ids_arxiv.workflow import corpus_base, workflow_config
+
+    owner = "23120345"
+    config = workflow_config(owner, tmp_path)
+    base = corpus_base(config)
+    manifest = tmp_path / "m1-final-v3/manifests/papers.parquet"
+    manifest.parent.mkdir(parents=True)
+    audit = audit_fixture()
+    for row in audit["records"]:
+        row["commit_marker_sha256"] = "marker"
+    audit["records"][0]["commit_marker_sha256"] = None
+    audit["records"][1]["commit_marker_sha256"] = None
+    pd.DataFrame({"arxiv_id": [r["arxiv_id"] for r in audit["records"]], "owner_student_id": owner}).to_parquet(manifest)
+    audit["discovery_manifest_sha256"] = sha256_file(manifest)
+    saved = {
+        str(base / "audit-result.json"): audit,
+        str(manifest.with_suffix(".json")): {"verified_discovery": True, "manifest_sha256": sha256_file(manifest)},
+    }
+    events = []
+    markers = {"2509-06048": None, "2509-06047": None}
+
+    class Service:
+        def __init__(self, module, **kwargs):
+            self.module, self.process = module, None
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def call(self, req, **kwargs):
+            action = req["action"]
+            if action == "read_json":
+                return {} if req["path"].endswith("crawl_status.json") else saved.get(req["path"], {})
+            if action == "write_json":
+                saved[req["path"]] = json.loads(json.dumps(req["value"]))
+                return True
+            if action == "copy":
+                shutil.copyfile(req["source"], req["target"])
+                return True
+            if action == "marker_hash":
+                return markers[Path(req["path"]).name]
+            if action == "stage":
+                Path(req["local"]).mkdir(parents=True, exist_ok=True)
+                return {"already_committed": False, "record": {}}
+            if action == "init":
+                return {}
+            if action == "paper":
+                events.append(("paper", req["arxiv_id"]))
+                return {"success": False, "arxiv_id": req["arxiv_id"]}
+            if action == "commit":
+                events.append(("commit", req["record"]["arxiv_id"]))
+                return {}
+            raise AssertionError(action)
+
+    run = tmp_path / "run"
+    run.mkdir()
+    monkeypatch.setenv("IDS_LOCAL_STATE_DIR", str(run))
+    monkeypatch.setattr(isolation, "IsolatedService", Service)
+    monkeypatch.setattr(finalize, "finalize", lambda *a, **k: {**audit, "operational_closed": False, "counts": {"pending": 3}})
+    monkeypatch.setattr(network_schedule, "configured_window", lambda: None)
+
+    repair.execute(config)
+    assert events == [("paper", "2509.06048"), ("commit", "2509.06048"),
+                      ("paper", "2509.06047"), ("commit", "2509.06047")]
+
+    # If a missing record suddenly acquires an unexpected marker before repair, still refuse.
+    markers["2509-06048"] = "external"
+    saved.pop(str(base / "repair-progress.json"), None)
+    saved.pop(str(base / "repair-plan.json"), None)
+    with pytest.raises(ValueError, match="Audited commit changed"):
+        repair.execute(config)
+
+

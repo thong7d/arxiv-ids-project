@@ -65,17 +65,18 @@ def validate_plan(plan, audit, assigned_ids):
     return plan
 
 
-def prepare_local(directory, metadata_refresh=False):
+def prepare_local(directory, metadata_refresh=False, allow_missing=False):
     """Only invalidate the staged copy; original Drive bytes stay intact."""
     from .checkpoint import read_json
     from .storage import atomic_json
     directory = Path(directory)
     status = read_json(directory / "crawl_status.json", {})
-    if not status:
+    if status:
+        status.update(success=False, commit_state="staged")
+        atomic_json(directory / "crawl_status.json", status)
+    elif not allow_missing:
         raise ValueError("Repair requires the audited existing publication")
-    status.update(success=False, commit_state="staged")
-    atomic_json(directory / "crawl_status.json", status)
-    if metadata_refresh:
+    if metadata_refresh and (status or (directory / "metadata.json").is_file()):
         metadata = read_json(directory / "metadata.json", {})
         metadata["metadata_dates_complete"] = False
         atomic_json(directory / "metadata.json", metadata)
@@ -177,8 +178,9 @@ def execute(config):
                         break
                     if target["audit_only"]:
                         continue
+                    expected_marker = target.get("commit_marker_sha256")
                     marker = io.call({"action": "marker_hash", "path": str(remote)})
-                    if not target.get("commit_marker_sha256") or marker != target["commit_marker_sha256"]:
+                    if marker != expected_marker:
                         raise ValueError("Audited commit changed; refusing stale repair: " + aid)
                     current = read(remote/"crawl_status.json")
                     if current.get("next_retry_epoch", 0) > time.time():
@@ -195,7 +197,7 @@ def execute(config):
                     offset = events.stat().st_size if events.exists() else 0
                     try:
                         io.call({"action": "stage", "remote": str(remote), "local": str(local), "force_revalidate": True})
-                        prepare_local(local, target["metadata_refresh"])
+                        prepare_local(local, target["metadata_refresh"], allow_missing=expected_marker is None)
                         init()
                         # Existing clients enforce the same per-provider pacing and UTC schedule.
                         result = papers.call({"action": "paper", "arxiv_id": aid, "output": str(spool/"raw"), "resume": True},
