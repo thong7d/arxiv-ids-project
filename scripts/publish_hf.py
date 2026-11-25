@@ -42,11 +42,10 @@ def build_static_space_bundle(
         env = dict(os.environ)
         if snapshot_path is not None and snapshot_path.is_file():
             env["IDS_M1_REPORT_SNAPSHOT"] = str(snapshot_path.resolve())
+        jb_bin = shutil.which("jupyter-book") or str(Path(sys.executable).with_name("jupyter-book"))
         subprocess.run(
             [
-                sys.executable,
-                "-m",
-                "jupyter_book",
+                jb_bin,
                 "build",
                 str(project_root / "book"),
                 "--all",
