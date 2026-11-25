@@ -170,7 +170,7 @@ def validate(
             console.print(f"[red][FAIL] Parquet export invalid:[/red] {res}")
             raise typer.Exit(code=1)
         console.print(
-            "[bold green][OK] All 7 Parquet tables conform to course schemas.[/bold green]"
+            "[bold green][OK] All 6 Parquet tables conform to course schemas.[/bold green]"
         )
     else:
         console.print(f"[red]Unknown stage '{stage}'. Choose 'raw', 'processed', or 'hf'.[/red]")
@@ -284,15 +284,50 @@ def export(
         "--student-id",
         help="Student ID to export assigned range for Hugging Face upload.",
     ),
+    raw_dir: Path = typer.Option(
+        Path("data/raw"),
+        "--raw-dir",
+        help="Input raw corpus directory.",
+    ),
+    processed_dir: Optional[Path] = typer.Option(
+        None,
+        "--processed-dir",
+        help="Optional processed M2 directory (hierarchy.json + refs.bib).",
+    ),
+    predictions_path: Optional[Path] = typer.Option(
+        None,
+        "--predictions",
+        help="Optional predictions Parquet path from M3.",
+    ),
     output_dir: Path = typer.Option(
         Path("exports"),
         "--output",
         "-o",
         help="Target export directory.",
     ),
+    config: Path = typer.Option(
+        Path("configs/members.csv"),
+        "--config",
+        help="Path to members.csv config.",
+    ),
 ):
-    """Export the 7 sharded Parquet tables for Hugging Face dataset (Phase 7)."""
-    console.print(f"[bold cyan]Export command placeholder for student {student_id}[/bold cyan]")
+    """Export the 6 sharded Parquet tables and Dataset Card for Hugging Face."""
+    from .exporter import export_student_dataset
+
+    target = output_dir / student_id if output_dir.name == "exports" else output_dir
+    summary = export_student_dataset(
+        student_id=student_id,
+        raw_dir=raw_dir,
+        output_dir=target,
+        processed_dir=processed_dir,
+        predictions_path=predictions_path,
+        members_config=config,
+    )
+    check = validate_parquet_tables(target, student_id=student_id, members_config=config)
+    if not check["valid"]:
+        console.print(f"[bold red][FAIL] Export validation failed:[/bold red] {check}")
+        raise typer.Exit(code=1)
+    console.print(f"[bold green][OK] Exported {student_id} to {target}:[/bold green] {summary['tables']}")
 
 
 @app.command()

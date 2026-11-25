@@ -29,6 +29,10 @@ class HierarchyData(BaseModel):
         default=None,
         description="Optional per-version source status (downloaded, pdf_only, not_found_404, non_tex_source)"
     )
+    element_kinds: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Optional mapping of element_id -> semantic kind (document, section, sentence, formula, figure, ...)"
+    )
 
     @field_validator("hierarchy")
     @classmethod

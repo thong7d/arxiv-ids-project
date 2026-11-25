@@ -744,3 +744,204 @@ Dự án chỉ hoàn thành khi:
 - **Class imbalance:** class weighting và đánh giá theo ranking, không chỉ accuracy.
 - **Trễ deadline:** đóng nội bộ sớm một ngày; URL Book/repo được tạo ngay Phase 0.
 - **Giấy phép dữ liệu:** giữ provenance/license metadata nội bộ và mô tả rõ trong dataset card, không tuyên bố một giấy phép chung nếu corpus có nhiều loại.
+
+---
+
+## 6. HỒ SƠ BÀN GIAO THỰC THI MILESTONE 2 (DÀNH CHO THÀNH `23120358` → BÀN GIAO TRỰC TIẾP SANG QUANG `23120345`)
+
+> **Cập nhật bàn giao thực chiến (25/11/2026):** Đây là đặc tả kỹ thuật khép kín dành cho **Nguyễn Tiến Thành (`23120358`)** để triển khai toàn bộ **Milestone 2 (Hierarchical Parsing, Standardization & Two-level Deduplication)** tuân thủ 100% đề trực tuyến (`statement/parsing/`), giải đáp của giảng viên, và hợp đồng dữ liệu đầu vào của **Nguyễn Trịnh Quang (`23120345`)** ở Milestone 3 + xuất 6 bảng Parquet Hugging Face.
+
+### 6.1. Hiện trạng Đầu vào từ Milestone 1 (Đã Kiểm toán Độc lập)
+
+Đường dẫn thư mục chung trên Google Drive: `/content/drive/MyDrive/IDS_Nhom13_Corpus_Backup`
+
+| Thành viên | MSSV | Đường dẫn Raw Corpus chính tắc (`m1-team-v4`) | Trạng thái M1 | Chi tiết Kiểm toán (`5.000` ID/người) |
+|:---|:---:|:---|:---|:---|
+| **Phạm Minh Thông** | `23120364` | `m1-team-v4/23120364/main/full/23120364/raw/` | **ĐÃ CHỐT (`operational_closed=True`)** | `4.959` `full_success`, `37` `verified_exception` (rút bài HTTP 404 có bằng chứng), `4` `references_unavailable` (S2 404) |
+| **Nguyễn Tiến Thành** | `23120358` | `m1-team-v4/23120358/main/full/23120358/raw/` | **ĐÃ CHỐT (`operational_closed=True`)** | `4.962` `full_success`, `35` `verified_exception` (rút bài HTTP 404 có bằng chứng), `3` `references_unavailable` (S2 404) |
+| **Nguyễn Trịnh Quang** | `23120345` | `m1-team-v4/23120345/main/full/23120345/raw/` | **Đang cào tiếp** | `1.669` `full_success`, `11` `verified_exception`, `2` `references_unavailable`, `3.318` `pending` |
+
+**Nguyên tắc chạy song song không chờ đợi:**
+1. Thành bắt đầu code trên local/fixture (`tests/fixtures/synthetic_paper/`), test pilot trên 30 bài thật, rồi **chạy production M2 ngay lập tức trên `10.000` bài đã đóng băng** của `23120364` và `23120358` (không đụng/sửa bất kỳ byte nào trong `raw/`).
+2. Khi dải `23120345` của Quang đóng sổ (`operational_closed=True`), chỉ cần chạy lại đúng 1 lệnh có `--resume` cho `23120345` để hoàn tất đủ `15.000` bài toàn nhóm.
+3. **Ràng buộc công cụ từ Giảng viên (Q&A):** Mọi thư viện/xử lý trong parser bắt buộc chạy **offline trên Google Colab CPU-only**, **tuyệt đối không gọi API bên ngoài** (không gọi LLM API, không gọi server GROBID ngoài). Sử dụng bộ phân tích tất định trên CPU (`pylatexenc`, `bibtexparser`, `regex`, state-machine scanner tự viết có kiểm soát).
+
+---
+
+### 6.2. Kiến trúc Module M2 Cần Xây dựng & Giao diện CLI
+
+Thành tạo nhánh `feature/m2-parsing`, triển khai gói `src/ids_arxiv/parser/` gồm các module tách bạch:
+
+```text
+src/ids_arxiv/parser/
+├── __init__.py            # Hàm điều phối parse_corpus(), parse_publication()
+├── compilation_path.py    # Chấm điểm root .tex, strip comment %, đệ quy \input/\include/\subfile, chống cycle/traversal
+├── hierarchy_builder.py   # Tokenizer/AST xây cây phân cấp động, xử lý list/item, lọc bỏ References, giữ Acknowledgements & Appendix
+├── normalizer.py          # Dọn lệnh bố cục LaTeX, chuẩn hóa Inline Math ($...$) & Block Math (\begin{equation}...\end{equation})
+├── sentence_splitter.py   # Che placeholder ($...$, \cite, \ref, URL) rồi tách câu chống cắt nhầm viết tắt/số thập phân
+├── bib_extractor.py       # Đọc đa file .bib + chuyển đổi \bibitem[opt]{key} sang BibTeX chuẩn (không bịa trường thiếu)
+├── deduplicator.py        # Cấp 1: Gộp BibTeX + Hợp nhất trường (Field Union) + Rewrite \cite{}; Cấp 2: Full-text Dedup sau cleanup
+└── m2_report.py           # Tổng hợp thống kê & biểu đồ cho Chương 2 Jupyter Book (book/ch2_parsing.md)
+```
+
+**Kết nối vào CLI có sẵn tại `src/ids_arxiv/cli.py`:**
+- `python -m ids_arxiv parse --input <raw_dir> --output <processed_dir> --student-id <mssv> --resume`
+- `python -m ids_arxiv validate --stage processed --path <processed_dir>`
+- `python -m ids_arxiv benchmark --stage parse --manifest ... --output ...` (chạy và ghi log RAM/thời gian trên Google Colab CPU).
+
+---
+
+### 6.3. Hợp đồng Đầu ra M2 (Khớp 100% Đề Trực tuyến & Sẵn sàng Cho Quang ở M3)
+
+Đường dẫn lưu trữ chuẩn trên Google Drive cho mỗi thành viên:
+`m1-team-v4/<owner>/main/processed/<owner>/<yymm-id>/` (ví dụ `2509-01047/`), gồm **4 tệp chuẩn**:
+
+1. **`hierarchy.json`** (bắt buộc qua `HierarchyData.model_validate` tại `src/ids_arxiv/schemas/hierarchy.py`):
+   ```json
+   {
+     "elements": {
+       "2509-01047#root_v1": "Version 1 root",
+       "2509-01047#sec_a1b2c3d4": "Introduction",
+       "2509-01047#sent_9f8e7d6c": "We formalize citation matching in $d$-dimensional space \\cite{2509-01047_vaswani2017}."
+     },
+     "hierarchy": {
+       "1": {
+         "2509-01047#sec_a1b2c3d4": "2509-01047#root_v1",
+         "2509-01047#sent_9f8e7d6c": "2509-01047#sec_a1b2c3d4"
+       },
+       "2": {}
+     },
+     "version_states": {
+       "1": "downloaded",
+       "2": "not_found_404"
+     },
+     "element_kinds": {
+       "2509-01047#root_v1": "document",
+       "2509-01047#sec_a1b2c3d4": "section",
+       "2509-01047#sent_9f8e7d6c": "sentence"
+     }
+   }
+   ```
+   - **Lưu ý cực kỳ quan trọng:** Luôn điền đầy đủ `element_kinds` với tập giá trị chuẩn: `document`, `chapter`, `section`, `subsection`, `subsubsection`, `paragraph`, `list`, `item`, `sentence`, `formula`, `figure` (trong đó **Table bắt buộc gán `kind = "figure"`** theo đề bài). Nhờ có `element_kinds`, module `src/ids_arxiv/exporter.py` và Quang xuất thẳng bảng `elements` sang Parquet mà không phải đoán hay parse lại!
+   - Trong `hierarchy[ver]`: **chỉ lưu các cạnh con → cha (`child_id: parent_id` với `child_id != parent_id`)**, đúng như bảng mẫu của đề trực tuyến (`statement/parsing/`). Node gốc `2509-01047#root_v1` nằm trong `elements` (`kind="document"`), đóng vai trò `parent_id` cao nhất của version `1` nhưng không tự trỏ vào chính nó.
+
+2. **`refs.bib`**: Toàn bộ các mục BibTeX của bài báo sau khi hợp nhất xuyên version và khử trùng lặp.
+
+3. **`bibtex_entries.json`** (sidecar phẳng giúp Quang nạp M3 & xuất bảng `bibtex` tức thì không cần parse lại `.bib`):
+   Danh sách JSON các dict chứa đúng 8 trường của `BibtexEntryRow` (`citation_key`, `entry_type`, `title`, `authors: list[str]`, `year: int | None`, `doi`, `journal`, `url`) kèm `raw_key_aliases: list[str]` (các key cũ đã gộp vào `citation_key`).
+
+4. **`parse_status.json`** (phục vụ `--resume`, Chương 2 Jupyter Book, và Feature Engineering M3 của Quang):
+   - Trạng thái từng version (`parsed`, `pdf_only`, `not_found_404`, `non_tex_source`, `parse_failed` kèm lý do phân loại).
+   - Bộ đếm trước/sau khử trùng lặp: `raw_element_count`, `dedup_element_count`, `raw_bib_count`, `dedup_bib_count`, `rewritten_cite_count`, `unresolved_cite_keys`, `tree_max_depth`.
+   - **`citation_contexts`** (bàn giao vàng cho Quang làm Feature Hierarchy ở M3!): với mỗi `citation_key`, ghi sẵn `frequency` (tổng số lần được `\cite` trong bài), `first_depth` (độ sâu xuất hiện đầu tiên trong cây), `section_titles` (danh sách tiêu đề mục chứa trích dẫn, ví dụ `["Introduction", "Related Work"]`), `min_normalized_position` ($\in [0, 1]$, vị trí câu đầu tiên chứa trích dẫn chia tổng số nút lá của version mới nhất).
+   - Thời gian chạy (`elapsed_seconds`) và kích thước output (`output_bytes`).
+
+---
+
+### 6.4. Danh mục 20 Trường hợp Biên (Edge Cases) Bắt buộc Xử lý Triệt để
+
+Giảng viên đặc biệt đánh giá cao các nhóm xử lý chính xác dữ liệu nhiễu thực tế trên arXiv thay vì chỉ chạy được trên LaTeX mẫu sạch. Thành cần đảm bảo parser xử lý và có unit test cho đủ **20 trường hợp biên** sau:
+
+#### Nhóm A — Phiên bản rỗng & Ngoại lệ từ Milestone 1
+1. **Phiên bản không có mã nguồn TeX (`pdf_only`, `not_found` HTTP 404 do tác giả rút bản nộp, hoặc định dạng phi-TeX):** Đọc `crawl_status.json` của bài báo; với mọi version trong `expected_versions` không có file `.tex`, **tuyệt đối không bỏ qua version hoặc xóa bài báo** — bắt buộc giữ khóa `"<v>": {}` trong `hierarchy` và ghi nhận đúng lý do vào `version_states["<v>"]` (đúng quy định đề bài & câu trả lời Q&A của thầy).
+2. **Bài có nhiều version trong đó một số version có TeX và một số version bị rút (`v1` tải được, `v2` HTTP 404):** Vẫn parse đầy đủ `v1`, giữ `"2": {}`, không để lỗi thiếu thư mục `v2` làm hỏng cả bài báo.
+3. **Bài thuộc diện `references_unavailable` (S2 trả 404 ở M1, `references.json = {}`):** Vẫn parse đầy đủ `hierarchy.json` và `refs.bib` như bình thường để giữ trọn vẹn thống kê M2 và các bảng `papers`, `elements`, `hierarchy`, `bibtex`.
+
+#### Nhóm B — Tìm Root & Gom Đa File (`Multi-file Gathering`)
+4. **Lệnh `\input` / `\include` nằm trong dòng comment `%` hoặc sau dấu phần trăm được escape `\%`:** Ví dụ `% \input{old_intro}` phải bị bỏ qua, nhưng `We achieve 99\% accuracy \input{results}` thì `\input{results}` **phải được thực thi**. Luôn chạy bộ lọc comment nhận diện đúng `\%` và bỏ qua môi trường nguyên văn (`verbatim`, `lstlisting`, `\verb|...|`) trước khi tìm lệnh nhúng file.
+5. **Biến thể cú pháp nhúng file & thiếu đuôi `.tex`:** Hỗ trợ `\input{sec/intro}`, `\input{sec/intro.tex}`, `\input sec/intro` (cú pháp TeX cổ không ngoặc nhọn), `\include{...}`, `\subfile{...}`, `\import{dir/}{file.tex}`, `\subimport{dir/}{file}`. Tự động nối `.tex` nếu đường dẫn chưa có đuôi; giải quyết đường dẫn tương đối chuẩn xác và **chặn tuyệt đối path traversal** (`..` trỏ ra ngoài thư mục version `vN/`).
+6. **Chu trình nhúng file (Include Cycle: `a.tex -> b.tex -> a.tex`) & nhúng lặp file macro:** Duy trì `call_stack` theo nhánh đệ quy; nếu phát hiện chu trình thì ngắt ngay nhánh lặp, ghi vào `parse_status.json` (`include_cycle_detected=True`) thay vì đệ quy vô hạn gây tràn bộ nhớ (`RecursionError`).
+7. **Nhiều file chứa `\documentclass` trong cùng thư mục (ví dụ `main.tex`, `supplement.tex`, `rebuttal.tex`, hoặc file con dùng `\documentclass[../main.tex]{subfiles}`):**
+   - Loại trừ các file có `\documentclass[...]{subfiles}` hoặc `standalone` hình vẽ khỏi vị trí root nếu có tài liệu chính.
+   - Chấm điểm ứng viên root theo thứ tự ưu tiên tất định: có `\begin{document}` + không bị file khác `\input` vào + số lượng file con được gọi hợp lệ lớn nhất + tên chuẩn (`main.tex`, `paper.tex`, `ms.tex`, `article.tex`, `<arxiv_id>.tex`) + độ dài thân bài lớn nhất; lưu `selected_root_file` và danh sách file mồ côi bị loại (`ignored_orphan_files`) vào log.
+8. **Bài Plain TeX hoặc thiếu `\documentclass`:** Nếu không file nào có `\documentclass`, ưu tiên file duy nhất có `\begin{document}`; nếu vẫn không có (plain TeX dùng `\bye`), chọn file `.tex` chính theo heuristic kích thước/tên và gắn cờ `plain_tex_fallback=True` thay vì làm rớt bài báo.
+9. **Lỗi bảng mã ký tự (Encoding Fallback):** Nguồn arXiv cũ/đa quốc gia thường lẫn `UTF-8-SIG` (BOM), `ISO-8859-1` (`latin-1`), `Windows-1252`. Đọc tuần tự `utf-8-sig` $\rightarrow$ `cp1252` $\rightarrow$ `latin-1` (kèm cờ log encoding) để không bao giờ văng `UnicodeDecodeError`.
+
+#### Nhóm C — Dựng Cây Phân cấp, Giữ & Loại trừ Đúng Quy định
+10. **Cấp độ đề mục nhảy bậc hoặc khác lớp tài liệu (`book`/`report` có `\part`, `\chapter` vs `article` bắt đầu từ `\section`, hoặc tác giả nhảy từ `\section` xuống thẳng `\subsubsection`):** Sử dụng ngăn xếp phân cấp theo trọng số (`document: 0 < part: 1 < chapter: 2 < section: 3 < subsection: 4 < subsubsection: 5 < paragraph: 6 < subparagraph: 7`). Khi gặp đề mục mới ở mức $w$, pop các phần tử trên đỉnh stack có mức $\ge w$ rồi gắn node mới vào đỉnh stack hiện tại $\rightarrow$ đảm bảo cây luôn liên thông, đơn gốc, không chu trình dù tác giả đánh cấp lộn xộn.
+11. **Bắt buộc GIỮ Acknowledgements & Appendices (kể cả không đánh số `\section*`):**
+    - Nhận diện đầy đủ: `\section*{Acknowledgements}`, `\section*{Acknowledgments}`, `\subsection*{...}`, `\paragraph{Acknowledgements}`, môi trường `\begin{acks}...\end{acks}` (chuẩn ACM), lệnh chuyển vùng `\appendix`, môi trường `\begin{appendices}...\end{appendices}`.
+12. **Bắt buộc LOẠI TRỪ phần Tài liệu tham khảo khỏi `hierarchy.json`:**
+    - Không đưa vào cây phân cấp mọi khối `\begin{thebibliography}...\end{thebibliography}`, lệnh `\bibliography{...}`, `\addbibresource{...}`, `\printbibliography`, môi trường `bibunit`/`refsection`, và cả trường hợp tác giả tự gõ mục `\section*{References}` / `\section*{Bibliography}` thủ công bằng `\item` hoặc đoạn văn cuối bài (chuyển toàn bộ nội dung đó sang `bib_extractor.py`).
+13. **Danh sách lồng nhau (`itemize`, `enumerate`, `description`) & Bảng biểu (`table` $\rightarrow$ `figure`):**
+    - Mỗi khối `\begin{itemize|enumerate|description}` tạo 1 node `kind="list"`; mỗi `\item` (kể cả `\item[Bước 1:]`) tạo 1 node con `kind="item"`, bên trong `\item` tiếp tục tách câu/công thức/danh sách con.
+    - Mọi môi trường hình và bảng (`figure`, `figure*`, `subfigure`, `wrapfigure`, `table`, `table*`, `wraptable`, `longtable`, `tabularx` độc lập) đều là nút lá độc lập với **`kind="figure"`** theo đúng quy ước của đề bài.
+
+#### Nhóm D — Chuẩn hóa Toán học, Dọn LaTeX & Tách Câu Chính xác
+14. **Chuẩn hóa Toán học an toàn (không vỡ bởi `\$` tiền tệ hoặc môi trường con `aligned`/`cases`/`matrix`):**
+    - Phân biệt chính xác `\$` (ký hiệu đô-la văn bản, giữ nguyên) với `$ ... $` (toán nội dòng) và `$$ ... $$` (toán khối).
+    - Inline math: đổi `\(...\)`, `\begin{math}...\end{math}`, `\ensuremath{...}` về `$...$`.
+    - Block math: đổi `$$...$$`, `\[...\]`, `equation*`, `align`, `align*`, `gather`, `gather*`, `multline`, `multline*`, `flalign`, `eqnarray` thành leaf node `kind="formula"` dạng chuẩn `\begin{equation}...\end{equation}`. Giữ nguyên các môi trường con bên trong công thức (`\begin{aligned}`, `\begin{pmatrix}`, `\begin{cases}`) và **không chạy bộ lọc xóa lệnh LaTeX văn bản lên bên trong công thức toán**.
+15. **Làm sạch lệnh định dạng thừa nhưng bảo toàn ngữ nghĩa & lệnh `\cite{}`:**
+    - Xóa các lệnh/tham số trang trí thuần hình thức: `\centering`, `\raggedright`, `\raggedleft`, `\noindent`, `\newpage`, `\clearpage`, `\pagebreak`, `\vspace*{...}`, `\hspace*{...}`, `\smallskip`, `\medskip`, `\bigskip`, `\toprule`, `\midrule`, `\bottomrule`, `\hline`, `\cline{...}`, tham số vị trí float `[htbp!]`, `[!t]`, `[H]`.
+    - Mở gói các lệnh bọc chữ mang nội dung: `\textbf{abc}` $\rightarrow$ `abc`, `\textit{abc}` $\rightarrow$ `abc`, `\emph{abc}` $\rightarrow$ `abc`, `\underline{abc}` $\rightarrow$ `abc` (chỉ áp dụng ngoài vùng toán).
+    - **Bắt buộc giữ nguyên các lệnh trích dẫn** (`\cite`, `\citep`, `\citet`, `\citealt`, `\citeauthor`, `\citeyear`, `\parencite`, `\textcite`, `\autocite`, `\nocite`) để bước sau đổi sang `canonical_key` và truyền sang M3!
+16. **Tách câu (Sentence Splitting) có che chắn (Placeholder Masking):**
+    - Trước khi tách câu trên một đoạn văn: thay thế tạm toàn bộ inline math `$...$`, lệnh `\cite...{...}`, `\ref{...}`, `\eqref{...}`, `\autoref{...}`, `\url{...}`, `\href{...}{...}` bằng token không chứa dấu chấm (ví dụ `__MATH_0__`, `__CITE_0__`).
+    - Không tách câu sau chữ viết tắt học thuật (`e.g.`, `i.e.`, `et al.`, `cf.`, `vs.`, `w.r.t.`, `a.k.a.`, `resp.`, `Fig.`, `Figs.`, `Tab.`, `Tabs.`, `Eq.`, `Eqs.`, `Sec.`, `Secs.`, `Alg.`, `Thm.`, `Lem.`, `Prop.`, `Cor.`, `App.`, `Ch.`, `Vol.`, `No.`, `pp.`, `Dr.`, `Prof.`, `Mr.`, `Mrs.`, `Ms.`, chữ cái tên tắt `J. Doe`), số thực (`3.14`), hoặc dấu ba chấm (`...`).
+    - Khôi phục lại placeholder sau khi tách câu, chuẩn hóa khoảng trắng thừa (`" ".join(s.split())`), bỏ các mảnh rỗng chỉ có dấu câu/comment.
+
+#### Nhóm E — Trích xuất BibTeX & Khử Trùng lặp 2 Cấp độ
+17. **Đọc `.bib` lỗi cú pháp thực tế & Bóc tách `\bibitem` có tham số tùy chọn:**
+    - File `.bib` thực tế trên arXiv hay có macro `@STRING{cvpr = "Proc. IEEE CVPR"}`, ngoặc nhọn lồng nhiều cấp `title = {{BERT}: Pre-training of Deep Bidirectional Transformers}`, thiếu dấu phẩy cuối trường, hoặc trùng key ngay trong cùng 1 file `.bib` $\rightarrow$ cần mở rộng `@STRING` và bắt ngoại lệ từng entry để 1 entry lỗi không làm mất cả file `.bib`.
+    - Với `\bibitem`: hỗ trợ cả `\bibitem{key}` lẫn `\bibitem[Vaswani et al., 2017]{key}`; xử lý các cách trình bày phổ biến (nháy kép `"Title"`, `\emph{Title}`, `\newblock`, năm `(2023)` hoặc `, 2023.`, `arXiv:2301.12345`, `doi:10.xxxx/...`). Trường không có trong văn bản gốc thì để `None`/`""`, **không tự suy diễn hoặc bịa giá trị**.
+    - *(Lưu ý bám sát đề trực tuyến)*: Corpus M1 chỉ giữ `.tex` và `.bib`, không giữ `.bbl`; parser trích từ toàn bộ `.bib` trong thư mục version và mọi `\bibitem` nằm trong các file `.tex` thuộc luồng biên dịch.
+18. **Khử trùng lặp Cấp 1 — Reference Deduplication + Field Unionization + Đổi tên `\cite{}` đa khóa:**
+    - Gom tất cả mục trích dẫn từ mọi version `v1..vN` của bài báo. Hai mục được coi là cùng một tài liệu tham khảo khi:
+      1. Trùng `DOI` chuẩn hóa (bỏ tiền tố `https://doi.org/`, viết thường); hoặc
+      2. Trùng `arXiv ID` chuẩn hóa (bỏ hậu tố `vN`, viết thường); hoặc
+      3. Tiêu đề chuẩn hóa (bỏ dấu câu/ngoặc LaTeX, lowercase) khớp chính xác (hoặc Jaro-Winkler / token ratio $\ge 0.95$ không mơ hồ) **kèm** trùng họ tác giả đầu tiên và chênh lệch năm $\le 1$ (tránh gộp nhầm *"Paper Title — Part I"* và *"Paper Title — Part II"* bằng cách kiểm tra hậu tố số La Mã/Part/Volume!).
+    - **Chọn `canonical_key`:** Ưu tiên key xuất hiện sớm nhất có tiền tố định danh ổn định, đồng thời lưu ánh xạ `alias_map[old_key] = canonical_key`.
+    - **Field Unionization (Hợp nhất trường — bắt buộc theo ví dụ đề bài):** Hợp nhất tất cả các trường không rỗng (`title`, `authors`, `year`, `doi`, `journal`, `url`, `entry_type` ưu tiên cụ thể hơn `@misc`). Nếu `v1` có `year=2017`, `v2` thêm `doi` nhưng `v3` mất `year`, bản ghi cuối cùng bắt buộc giữ đủ cả `year=2017` và `doi`!
+    - **Rewrite `\cite{}` đa khóa:** Cập nhật mọi lệnh trích dẫn trong câu và trong `\caption{}` của Figure/Table, xử lý chính xác danh sách nhiều key cách nhau bởi dấu phẩy và khoảng trắng: ví dụ `\citep[see][]{key_a, vit_transformer, key_b}` $\rightarrow$ `\citep[see][]{key_a, vaswani2017, key_b}` (đồng thời khử lặp nếu hai key trong cùng một `\cite{k1, k2}` cùng gộp về một `canonical_key` $\rightarrow$ `\cite{canonical_key}`!).
+19. **Khử trùng lặp Cấp 2 — Full-text Content Deduplication (Sau Cleanup & Sau khi Đổi tên `\cite{}`):**
+    - **Thứ tự bắt buộc:** Cleanup LaTeX $\rightarrow$ Chuẩn hóa Math $\rightarrow$ Đổi tên `\cite{}` sang `canonical_key` $\rightarrow$ **Mới tính mã băm nội dung để khử trùng lặp Full-text!** (Nếu dedup trước khi đổi tên `\cite{}`, một câu không đổi giữa `v1` và `v2` nhưng tác giả đổi tên citation key sẽ bị tính thành 2 element khác nhau — mất điểm dedup!).
+    - **Xử lý câu giống hệt nhau lặp lại nhiều lần trong CÙNG một version (ví dụ câu tiêu đề phụ `"Experimental Setup"` hoặc `"Proof."` xuất hiện 3 lần trong `v1`):**
+      - Đánh chỉ số lần xuất hiện `occ_idx` (`0, 1, 2...`) cho cặp `(kind, normalized_content)` bên trong một version: `element_id = f"{dir_id}#{kind_code}_{sha256_12}"` (với `occ_idx == 0`) và `f"{dir_id}#{kind_code}_{sha256_12}_{occ_idx}"` (với `occ_idx >= 1`).
+      - Nhờ vậy: trong cùng `v1`, 3 câu `"Proof."` ở 3 định lý khác nhau là 3 nút riêng (mỗi nút có đúng 1 cha duy nhất trong `hierarchy["1"]`, không bị ghi đè mất 2 cạnh trước!); đồng thời sang `v2`, câu `"Proof."` lần thứ nhất, thứ hai, thứ ba tự động khớp lại đúng `element_id` tương ứng của `v1`!
+20. **Kiểm soát RAM & Thời gian trên Bài báo Cực lớn (Colab CPU Budget):**
+    - Một số bài survey/thesis trên arXiv có hàng trăm trang `.tex` hoặc file `.bib` vài chục MB: xử lý cuốn chiếu từng bài báo, ghi kết quả atomic (`tmp` $\rightarrow$ `replace`), giải phóng cây AST ngay sau mỗi bài, đặt giới hạn an toàn cho regex tránh catastrophic backtracking, và ghi checkpoint mỗi bài để `--resume` bỏ qua ngay các bài đã có `parse_status.json` hợp lệ.
+
+---
+
+### 6.5. Quy trình Thực hiện Từng Bước cho Thành (`Step-by-Step`)
+
+1. **Bước 1 — Khởi tạo nhánh & Cài đặt gói bổ sung (nếu cần):**
+   - `git checkout main && git pull && git checkout -b feature/m2-parsing`
+   - Nếu thêm thư viện CPU nhẹ (như `pylatexenc`, `bibtexparser`), cập nhật đồng thời vào cả `pyproject.toml`, `requirements.txt` và `requirements-colab-m1.txt` (hoặc tạo `requirements-colab-m2.txt`).
+2. **Bước 2 — Xây bộ Unit Test cho 20 Edge Cases trước/song song khi code:**
+   - Tạo `tests/test_parser_compilation.py`, `tests/test_parser_hierarchy.py`, `tests/test_parser_normalization.py`, `tests/test_parser_dedup.py`.
+   - Đảm bảo `ruff check src tests` và `pytest` xanh 100% trên GitHub Actions CI.
+3. **Bước 3 — Chạy Pilot kiểm chứng trên 30 bài thật (10 bài/thành viên):**
+   - Chọn cả bài nhiều version (`v1..v4`), bài `pdf_only`, bài có `verified_exception` HTTP 404, bài có cả `.bib` lẫn `\bibitem`.
+   - Kiểm tra bằng `python -m ids_arxiv validate --stage processed` và đọc kiểm tra bằng mắt ít nhất 10 bài trong dải `23120358`.
+4. **Bước 4 — Chạy Production & Benchmark trên Google Colab CPU:**
+   - Chạy parser trên Colab CPU cho toàn bộ dải `23120364` (`5.000` bài) và `23120358` (`5.000` bài), lưu output vào `m1-team-v4/<owner>/main/processed/<owner>/`, thu thập đầy đủ Wall Time, trung bình giây/bài, Peak RAM, dung lượng output và tỷ lệ giảm trùng lặp.
+   - Chạy tiếp cho dải `23120345` ngay khi Quang hoàn tất cào M1.
+5. **Bước 5 — Viết Chương 2 Jupyter Book (`book/ch2_parsing.md`):**
+   - Biến `book/ch2_parsing.md` thành MyST Notebook thực thi code tự động từ file snapshot thống kê M2 (giống cơ chế `artifacts/m1-report/snapshot.json` của Chương 1) — tuyệt đối không dán ảnh chụp màn hình tĩnh!
+   - Trình bày đủ: sơ đồ luồng biên dịch đa file, quy tắc dựng cây & chuẩn hóa, giải thuật khử trùng lặp 2 cấp độ, phân bố độ sâu cây, tỷ lệ thành công theo version/publication, số lượng element & BibTeX trước/sau dedup (% giảm dư thừa), bảng phân loại lỗi biên (nếu có), và bảng benchmark Colab CPU (Wall time, s/paper, Peak RAM, Output size).
+
+---
+
+### 6.6. Checklist Nghiệm thu Milestone 2 & Gói Bàn giao Sang Quang (Milestone 3)
+
+Trước khi merge PR `feature/m2-parsing` vào `main` và nhắn Quang bắt đầu chạy M3 trên dữ liệu thật, Thành tích chọn xác nhận đủ **12 tiêu chí cổng nghiệm thu (Acceptance Gate)** sau:
+
+- [ ] **1. Bao phủ 100% Manifest:** Đủ `5.000 / 5.000` bài mỗi dải đã chốt đều có thư mục trong `processed/<owner>/<yymm-id>/` (kể cả bài `pdf_only` hay rút bài đều có `hierarchy.json` ghi version rỗng `{}` và `refs.bib` hợp lệ, không mất bất kỳ ID nào).
+- [ ] **2. Tỷ lệ Parse thành công cao:** Đạt $\ge 98\%$ trên tổng số các version có nguồn LaTeX hợp lệ; $100\%$ các trường hợp lỗi còn lại có mã phân loại nguyên nhân rõ ràng trong `parse_status.json`.
+- [ ] **3. Tính chất Cây chuẩn Toán học:** `python -m ids_arxiv validate --stage processed` đạt 100% (`0` chu trình, mỗi version có TeX có đúng 1 root `kind="document"`, mọi `child_id != parent_id`, mọi ID trong `hierarchy` đều tồn tại trong `elements` và mang tiền tố mã bài báo).
+- [ ] **4. Loại trừ & Bao gồm Đúng Luật:** `0%` cây phân cấp chứa mục References/Bibliography; `100%` bài có Acknowledgements và Appendices (kể cả `\section*`) được giữ nguyên trong cây.
+- [ ] **5. Chuẩn hóa Nút lá & Toán học:** Nút lá chỉ thuộc 3 loại (`sentence`, `formula`, `figure` — gồm cả Table); Inline math đồng nhất về `$...$`; Block math đồng nhất về `\begin{equation}...\end{equation}`; không còn rác bố cục (`\centering`, `\midrule`, `[htbp]`).
+- [ ] **6. Khử trùng lặp Cấp 1 (BibTeX + Field Union + Cite Rewrite):** Mọi mục trùng qua các version đã hợp nhất đầy đủ các trường (`title`, `authors`, `year`, `doi`, `journal`, `url`) và mọi lệnh `\cite{...}` trong `elements` đã đổi sang `canonical_key` khớp với `refs.bib` / `bibtex_entries.json`.
+- [ ] **7. Khử trùng lặp Cấp 2 (Full-text sau Cleanup):** Câu/phần tử không đổi giữa `v1` và `v2` dùng chung đúng 1 `element_id` trong `elements`; câu lặp nhiều lần trong cùng 1 version không làm mất cạnh của cây.
+- [ ] **8. Tương thích Xuất Parquet Tự động:** Chạy thử `python -m ids_arxiv export --student-id 23120358 --raw-dir ... --processed-dir ... --output /tmp/test_hf` sinh thành công các bảng `elements`, `hierarchy`, `bibtex` khác rỗng và pass `python -m ids_arxiv validate --stage hf --student-id 23120358`.
+- [ ] **9. Gói Đặc trưng Cây sẵn cho Quang (`citation_contexts`):** Trong `parse_status.json` (hoặc bảng tổng hợp `m2_citation_contexts.parquet`), mỗi `(arxiv_id, citation_key)` đã có sẵn `frequency`, `first_depth`, `section_titles`, `min_normalized_position` để Quang ghép thẳng với `references.json` (M1) tạo không gian ứng viên $m \times n$ của M3 mà không cần đọc lại LaTeX.
+- [ ] **10. Benchmark Colab CPU Chính thức:** Có file JSON tổng hợp benchmark chạy trên Google Colab CPU (Wall time, mean/median s/bài, Peak RAM, dung lượng đĩa đầu ra).
+- [ ] **11. Chương 2 Jupyter Book Build Sạch:** `jupyter-book build book --all --warningiserror --keep-going` pass 100% không lỗi, sinh tự động toàn bộ bảng biểu & đồ thị tương tác.
+- [ ] **12. CI/CD Xanh trên GitHub:** `ruff check src tests` và `pytest` pass 100% trên GitHub Actions, không có bất kỳ file dữ liệu/nhị phân/token nào lọt vào Git.
+
+**Ngay khi đạt đủ 12 mục trên, gói bàn giao trao tay cho Quang (`23120345`) gồm:**
+1. Nhánh `main` đã merge parser + exporter + `m2_report.py`.
+2. Đường dẫn Drive `m1-team-v4/<owner>/main/processed/<owner>/` chứa đủ `hierarchy.json`, `refs.bib`, `bibtex_entries.json`, `parse_status.json` (kèm `citation_contexts`).
+3. Snapshot thống kê M2 để cả nhóm ráp vào Dataset Card Hugging Face và Poster khổ A2 dọc (`13.pptx`).

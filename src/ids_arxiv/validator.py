@@ -140,10 +140,13 @@ def validate_parquet_tables(
     target_tables = list(TABLE_SCHEMAS)
 
     for table_name in target_tables:
+        data_table_path = export_dir / "data" / table_name
         table_path = export_dir / table_name
         parquet_files: List[Path] = []
-        if table_path.is_dir():
-            parquet_files = list(table_path.glob("*.parquet"))
+        if data_table_path.is_dir():
+            parquet_files = sorted(data_table_path.glob("*.parquet"))
+        elif table_path.is_dir():
+            parquet_files = sorted(table_path.glob("*.parquet"))
         elif table_path.with_suffix(".parquet").exists():
             parquet_files = [table_path.with_suffix(".parquet")]
 
@@ -188,12 +191,14 @@ def validate_parquet_tables(
             members = load_members(members_config)
             member = next((m for m in members if m.student_id == student_id), None)
             if member:
+                data_papers_path = export_dir / "data" / "papers"
                 papers_table_path = export_dir / "papers"
-                p_file = (
-                    list(papers_table_path.glob("*.parquet"))[0]
-                    if papers_table_path.is_dir()
-                    else export_dir / "papers.parquet"
-                )
+                if data_papers_path.is_dir() and list(data_papers_path.glob("*.parquet")):
+                    p_file = sorted(data_papers_path.glob("*.parquet"))[0]
+                elif papers_table_path.is_dir():
+                    p_file = sorted(papers_table_path.glob("*.parquet"))[0]
+                else:
+                    p_file = export_dir / "papers.parquet"
                 t_papers = pq.read_table(p_file)
                 arxiv_ids = t_papers["arxiv_id"].to_pylist()
                 out_of_range = [aid for aid in arxiv_ids if not member.contains(aid)]
