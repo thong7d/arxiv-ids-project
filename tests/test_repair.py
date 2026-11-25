@@ -250,3 +250,82 @@ def test_repair_handles_missing_commit_marker_and_rejects_external_change(tmp_pa
         repair.execute(config)
 
 
+def test_repair_collects_withdrawal_evidence_before_audit(tmp_path, monkeypatch):
+    import json
+    import shutil
+    import time
+
+    import pandas as pd
+
+    from ids_arxiv import finalize, isolation, network_schedule, repair, workflow
+    from ids_arxiv.storage import sha256_file
+    from ids_arxiv.workflow import corpus_base, workflow_config
+
+    owner = "23120345"
+    config = workflow_config(owner, tmp_path)
+    base = corpus_base(config)
+    manifest = tmp_path / "m1-final-v3/manifests/papers.parquet"
+    manifest.parent.mkdir(parents=True)
+    audit = audit_fixture()
+    for row in audit["records"]:
+        row["commit_marker_sha256"] = "marker"
+    pd.DataFrame({"arxiv_id": [r["arxiv_id"] for r in audit["records"]], "owner_student_id": owner}).to_parquet(manifest)
+    audit["discovery_manifest_sha256"] = sha256_file(manifest)
+    saved = {
+        str(base / "audit-result.json"): audit,
+        str(manifest.with_suffix(".json")): {"verified_discovery": True, "manifest_sha256": sha256_file(manifest)},
+    }
+    events = []
+
+    class Service:
+        def __init__(self, module, **kwargs):
+            self.module, self.process = module, None
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def call(self, req, **kwargs):
+            action = req["action"]
+            if action == "read_json":
+                if req["path"].endswith("crawl_status.json"):
+                    return {
+                        "next_retry_epoch": time.time() + 3600,
+                        "versions": [{"version": 1, "downloaded": True}, {"version": 2, "error": "HTTP 404"}],
+                    }
+                return saved.get(req["path"], {})
+            if action == "write_json":
+                saved[req["path"]] = json.loads(json.dumps(req["value"]))
+                return True
+            if action == "copy":
+                shutil.copyfile(req["source"], req["target"])
+                return True
+            if action == "marker_hash":
+                return "marker"
+            raise AssertionError(action)
+
+    monkeypatch.setattr(workflow, "verify_withdrawal", lambda s, aid, ver: (
+        events.append(("verify_withdrawal", aid, ver)) or {"arxiv_id": aid, "version": ver, "verified": True}
+    ))
+    run = tmp_path / "run"
+    run.mkdir()
+    monkeypatch.setenv("IDS_LOCAL_STATE_DIR", str(run))
+    monkeypatch.setattr(isolation, "IsolatedService", Service)
+    monkeypatch.setattr(finalize, "finalize", lambda *a, **k: (
+        events.append(("audit", len(saved.get(str(base / "closure-evidence.json"), {}).get("records", {}))))
+        or {**audit, "operational_closed": False, "counts": {"pending": 3}}
+    ))
+    monkeypatch.setattr(network_schedule, "configured_window", lambda: None)
+    monkeypatch.setattr(workflow, "configured_window", lambda: None)
+
+    repair.execute(config)
+    assert events == [
+        ("verify_withdrawal", "2509.06048", 2),
+        ("verify_withdrawal", "2509.06047", 2),
+        ("verify_withdrawal", "2509.06049", 2),
+        ("audit", 3),
+    ]
+    ce = saved[str(base / "closure-evidence.json")]["records"]
+    assert ce["2509.06048v2"]["verified"] and ce["2509.06047v2"]["verified"] and ce["2509.06049v2"]["verified"]
+
+
+

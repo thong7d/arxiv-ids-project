@@ -92,7 +92,7 @@ def execute(config):
     from .runtime import runtime_id
     from .storage import atomic_json, sha256_file, utc_now
     from .team_run import environment
-    from .workflow import corpus_base
+    from .workflow import collect_source_evidence, corpus_base
 
     owner = config["target_owner_ids"][0]
     base = corpus_base(config)
@@ -216,6 +216,8 @@ def execute(config):
                         row.update(state="attempt_failed_review", error=type(error).__name__ + ": " + str(error))
                     write(progress_path, progress)
                     state["processed"] = len(progress["attempted"])
+            state["stage"] = "source_evidence"
+            collect_source_evidence(config, io, {"failed_ids": [t["arxiv_id"] for t in plan["targets"]]})
             state["stage"] = "audit"
             if events.exists():
                 try:
